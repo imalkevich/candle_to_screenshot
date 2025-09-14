@@ -35,19 +35,18 @@ def list_screenshots(folder: Path):
     return sorted([p for p in folder.glob('candle_*.png') if p.is_file()])
 
 
-def determine_start_index(images, situation_dir: Path, normal_dir: Path):
-    """Determine index to resume from by counting already labeled files.
-    We assume labeled filenames keep original candle_XXXXX.png name when copied.
+def determine_start_index(images, situation_dir: Path, normal_dir: Path, exit_dir: Path):
+    """Determine index to resume from by counting already labeled files across all processed folders.
+    We assume copied filenames keep original candle_XXXXX.png name.
     """
     labeled = set()
-    for d in (situation_dir, normal_dir):
+    for d in (situation_dir, normal_dir, exit_dir):
         for p in d.glob('candle_*.png'):
             labeled.add(p.name)
-    # find first image whose name not in labeled
     for idx, img in enumerate(images):
         if img.name not in labeled:
             return idx
-    return len(images)  # all done
+    return len(images)
 
 
 class LabelApp:
@@ -57,41 +56,51 @@ class LabelApp:
         self.situation_dir = situation_dir
         self.normal_dir = normal_dir
         self.exit_dir = exit_dir
+        self.open_position = open_position
         self.index = 0
         self.photo_cache = None
-        # history stack of tuples (image_path, destination_dir) for undo
-        self.history: list[tuple[Path, Path]] = []
-        # Track whether we currently consider a position open (after a situation until exit)
-        self.open_position = open_position
+        self.history: list[tuple[Path, Path]] = []  # file actions
+        self.state_history: list[str] = []  # 'OPEN' / 'CLOSE' sequence for quicker reasoning (optional)
 
+        # Window setup
         self.root.title('Candlestick Labeling')
-        self.root.geometry('600x600')
         self.root.configure(bg='#222222')
+        self.root.geometry('1040x600')
 
-        self.label_frame = tk.Frame(self.root, bg='#222222')
-        self.label_frame.pack(fill=tk.BOTH, expand=True)
+        main_frame = tk.Frame(self.root, bg='#222222')
+        main_frame.pack(fill=tk.BOTH, expand=True)
 
-        self.canvas = tk.Label(self.label_frame, bg='#222222')
+        left_frame = tk.Frame(main_frame, bg='#222222')
+        left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(10,4), pady=8)
+
+        right_frame = tk.Frame(main_frame, bg='#222222', bd=1, relief=tk.SUNKEN)
+        right_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=(4,10), pady=8)
+
+        tk.Label(right_frame, text='History', bg='#222222', fg='#dddddd', font=('Arial', 10, 'bold')).pack(anchor='n', pady=(4,2))
+        self.history_list = tk.Listbox(right_frame, bg='#111111', fg='#e0e0e0', width=64, activestyle='none')
+        self.history_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=4, pady=4)
+        scroll = tk.Scrollbar(right_frame, command=self.history_list.yview)
+        scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.history_list.config(yscrollcommand=scroll.set)
+
+        # Chart display
+        self.canvas = tk.Label(left_frame, bg='#222222')
         self.canvas.pack(pady=10)
 
-        btn_frame = tk.Frame(self.root, bg='#222222')
-        btn_frame.pack(pady=10)
-
+        # Buttons
+        btn_frame = tk.Frame(left_frame, bg='#222222')
+        btn_frame.pack(pady=6)
         self.btn_yes = tk.Button(btn_frame, text='Yes (Situation)', width=18, command=self.primary_action, bg='#2e7d32', fg='white')
         self.btn_yes.grid(row=0, column=0, padx=10, pady=(0,4))
-
         self.btn_no = tk.Button(btn_frame, text='No (Normal)', width=18, command=self.secondary_action, bg='#c62828', fg='white')
         self.btn_no.grid(row=0, column=1, padx=10, pady=(0,4))
-
-        # Back button centered beneath Yes/No spanning both columns
         self.btn_back = tk.Button(btn_frame, text='Back', width=20, command=self.undo_last, bg='#000000', fg='white')
         self.btn_back.grid(row=1, column=0, columnspan=2, pady=(6,0))
 
-        self.status = tk.Label(self.root, text='', bg='#222222', fg='#cccccc')
-        self.status.pack(pady=5)
+        self.status = tk.Label(left_frame, text='', bg='#222222', fg='#cccccc')
+        self.status.pack(pady=4)
 
-        # Keyboard shortcuts:
-        # Enter -> Primary (Yes/Situation or Exit), Space -> Secondary (No/Continue), Backspace -> Back (undo), Escape -> Quit
+        # Shortcuts
         self.root.bind('<Return>', lambda e: self.primary_action())
         self.root.bind('<space>', lambda e: self.secondary_action())
         self.root.bind('<BackSpace>', lambda e: self.undo_last())
@@ -99,6 +108,7 @@ class LabelApp:
 
         self.update_image()
         self.update_button_states()
+        self.preload_history()
 
     # --- State & UI helpers ---
     def update_button_states(self):
@@ -118,16 +128,41 @@ class LabelApp:
         else:
             self.mark_situation()
 
+    def _log_history(self, filename: str, label: str):
+        base = filename.split('.')[0]
+        entry = f"{base}    {label}"
+        self.history_list.insert(tk.END, entry)
+        self.history_list.yview_moveto(1.0)
+
+    def preload_history(self):
+        """Populate history list from existing labeled situation/exit images on resume.
+        Does not push entries onto self.history (undo stack) because they are prior committed actions.
+        """
+        # Collect events with their base filename for deterministic ordering
+        events = []  # (base, filename, label)
+        for folder, label in ((self.situation_dir, 'Situation triggered'), (self.exit_dir, 'Exit')):
+            for p in folder.glob('candle_*.png'):
+                base = p.stem  # candle_00001
+                events.append((base, p.name, label))
+        # Sort by base filename (portion before whitespace in final entry)
+        events.sort(key=lambda x: x[0])
+        for base, fname, label in events:
+            entry = f"{base}    {label}"
+            self.history_list.insert(tk.END, entry)
+        if events:
+            self.history_list.yview_moveto(1.0)
+
     def secondary_action(self):
         # Always normal/continue
         self.mark_normal()
 
     def mark_situation(self):
-        # Situation starts a position
+        current = self.current_image()
+        fname = current.name if current else 'candle_?????.png'
         self.copy_current(self.situation_dir)
-        # Opening position: now require an exit later
         self.open_position = True
-        self.history.append(('STATE', 'OPEN'))  # marker event
+        self.history.append(('STATE', 'OPEN'))
+        self._log_history(fname, 'Situation triggered')
         self.advance()
         self.update_button_states()
 
@@ -136,10 +171,12 @@ class LabelApp:
         self.advance()
 
     def mark_exit(self):
-        # Exit closes the position
+        current = self.current_image()
+        fname = current.name if current else 'candle_?????.png'
         self.copy_current(self.exit_dir)
         self.open_position = False
         self.history.append(('STATE', 'CLOSE'))
+        self._log_history(fname, 'Exit')
         self.advance()
         self.update_button_states()
 
@@ -211,6 +248,9 @@ class LabelApp:
                 self.open_position = True
             self.status.config(text=f"Reverted state change ({marker_type}).")
             self.update_button_states()
+            # Remove last history list entry (situation triggered or exit) if exists
+            if self.history_list.size() > 0:
+                self.history_list.delete(self.history_list.size() - 1)
             return
         # Otherwise it's a file copy tuple (img_path, destination_dir)
         last_img, last_dir = last_item
@@ -274,7 +314,7 @@ def main():
             print("[INFO] Restart requested: no existing labeled images to remove.")
 
     # Determine resume position
-    start_index = 0 if args.restart else determine_start_index(images, situation_dir, normal_dir)
+    start_index = 0 if args.restart else determine_start_index(images, situation_dir, normal_dir, exit_dir)
     if start_index >= len(images):
         print('[INFO] All images already labeled.')
         return 0
