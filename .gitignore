@@ -1,0 +1,101 @@
+# Python bytecode and cache
+auto-save-list
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+.env/
+.env*/
+.venv/
+.venv*/
+ENV/
+env/
+virtualenv/
+
+# Distribution / packaging
+build/
+dist/
+.eggs/
+*.egg-info/
+*.egg
+pip-wheel-metadata/
+*.whl
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Jupyter/IPython
+.ipynb_checkpoints
+profile_default/
+.ipython/
+
+# PyCharm / VS Code
+.idea/
+.vscode/*
+!.vscode/launch.json
+!.vscode/tasks.json
+
+# Mypy / Pyright / Type checkers
+.mypy_cache/
+.dmypy.json
+.dmypy.json
+.pyre/
+.pytype/
+
+# Logs and debug
+*.log
+
+# OS / Editor junk
+.DS_Store
+Thumbs.db
+
+# Data / artifacts
+/data/
+**/data/
+*.csv
+!README*.csv
+ 
+# Generated candlestick image sequences
+/screenshots/
+**/screenshots/
+
+# Environment variables / secrets
+*.env
+.env.local
+
+# C extensions
+*.so
+
+# Cache / temp
+tmp/
+*.tmp
+*.temp
+
+# Local configuration overrides
+local_settings.py
+
+# Poetry / pipenv / hatch / pdm
+poetry.lock
+Pipfile.lock
+pdm.lock
+
+# VS Code Python extension cache
+.python/**
+

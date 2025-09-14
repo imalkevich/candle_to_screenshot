@@ -1,0 +1,100 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Download OHLC: Defaults",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/download_ohlc.py",
+      "args": [
+        "--ticker", "BTCUSDT",
+        "--interval", "15m",
+        "--time", "1 month"
+      ]
+    },
+    {
+      "name": "Download OHLC: Inputs",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/download_ohlc.py",
+      "args": [
+        "--ticker", "${input:ticker}",
+        "--interval", "${input:interval}",
+        "--time", "${input:timeRange}"
+      ]
+    },
+    {
+      "name": "Generate Screenshots: Defaults",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/generate_screenshots.py",
+      "args": [
+        "--ticker", "BTCUSDT",
+        "--interval", "15m",
+        "--time", "1 month",
+        "--max-candles", "96"
+      ]
+    },
+    {
+      "name": "Generate Screenshots: Inputs",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/generate_screenshots.py",
+      "args": [
+        "--ticker", "${input:ticker}",
+        "--interval", "${input:interval}",
+        "--time", "${input:timeRange}",
+        "--skip", "${input:skipCandles}",
+        "--max-candles", "${input:maxCandles}"
+      ]
+    },
+    {
+      "name": "Generate Screenshots: Inputs (Refresh)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/generate_screenshots.py",
+      "args": [
+        "--ticker", "${input:ticker}",
+        "--interval", "${input:interval}",
+        "--time", "${input:timeRange}",
+        "--skip", "${input:skipCandles}",
+        "--max-candles", "${input:maxCandles}",
+        "--refresh"
+      ]
+    }
+  ],
+  "inputs": [
+    {
+      "id": "ticker",
+      "type": "promptString",
+      "description": "Trading pair (e.g. BTCUSDT)",
+      "default": "BTCUSDT"
+    },
+    {
+      "id": "interval",
+      "type": "pickString",
+      "description": "Candle interval",
+      "options": ["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w","1M"],
+      "default": "15m"
+    },
+    {
+      "id": "skipCandles",
+      "type": "promptString",
+      "description": "Number of initial candles to skip",
+      "default": "480"
+    },
+    {
+      "id": "maxCandles",
+      "type": "promptString",
+      "description": "Maximum candles shown per screenshot window (default 96 = 1 day of 15m candles)",
+      "default": "96"
+    },
+    {
+      "id": "timeRange",
+      "type": "pickString",
+      "description": "Time range backfill",
+      "options": ["1 day","3 days","1 week","2 weeks","1 month","3 months","6 months","1 year"],
+      "default": "1 month"
+    }
+  ]
+}
