@@ -8,7 +8,7 @@ from PIL import Image, ImageTk
 import re
 
 # Reuse logic from existing modules by importing functions
-from generate_screenshots import build_data_filename, ensure_data, load_dataframe, SCREENSHOTS_DIR
+from generate_screenshots import ensure_data, load_dataframe, SCREENSHOTS_DIR
 
 PROCESSED_DIR = Path('processed')
 
@@ -85,10 +85,13 @@ class LabelApp:
         self.status = tk.Label(self.root, text='', bg='#222222', fg='#cccccc')
         self.status.pack(pady=5)
 
-        self.root.bind('<Left>', lambda e: self.mark_no())
-        self.root.bind('<Right>', lambda e: self.mark_yes())
+        # Keyboard shortcuts:
+        # Enter -> Yes, Right Arrow or Backspace -> No, Left Arrow -> Back (undo), Escape -> Quit
+        self.root.bind('<Return>', lambda e: self.mark_yes())
+        self.root.bind('<Right>', lambda e: self.mark_no())
+        self.root.bind('<BackSpace>', lambda e: self.mark_no())
+        self.root.bind('<Left>', lambda e: self.undo_last())
         self.root.bind('<Escape>', lambda e: self.root.quit())
-        self.root.bind('<BackSpace>', lambda e: self.undo_last())
 
         self.update_image()
 
