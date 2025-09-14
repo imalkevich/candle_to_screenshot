@@ -86,11 +86,10 @@ class LabelApp:
         self.status.pack(pady=5)
 
         # Keyboard shortcuts:
-        # Enter -> Yes, Right Arrow or Backspace -> No, Left Arrow -> Back (undo), Escape -> Quit
+        # Enter -> Yes, Space -> No, Backspace -> Back (undo), Escape -> Quit
         self.root.bind('<Return>', lambda e: self.mark_yes())
-        self.root.bind('<Right>', lambda e: self.mark_no())
-        self.root.bind('<BackSpace>', lambda e: self.mark_no())
-        self.root.bind('<Left>', lambda e: self.undo_last())
+        self.root.bind('<space>', lambda e: self.mark_no())
+        self.root.bind('<BackSpace>', lambda e: self.undo_last())
         self.root.bind('<Escape>', lambda e: self.root.quit())
 
         self.update_image()
