@@ -62,6 +62,41 @@
         "--refresh"
       ]
     }
+    ,
+    {
+      "name": "Label Screenshots: Defaults",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/label_screenshots.py",
+      "args": [
+        "--ticker", "BTCUSDT",
+        "--interval", "15m",
+        "--time", "1 month"
+      ]
+    },
+    {
+      "name": "Label Screenshots: Inputs",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/label_screenshots.py",
+      "args": [
+        "--ticker", "${input:ticker}",
+        "--interval", "${input:interval}",
+        "--time", "${input:timeRange}"
+      ]
+    },
+    {
+      "name": "Label Screenshots: Inputs (Refresh)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/label_screenshots.py",
+      "args": [
+        "--ticker", "${input:ticker}",
+        "--interval", "${input:interval}",
+        "--time", "${input:timeRange}",
+        "--refresh"
+      ]
+    }
   ],
   "inputs": [
     {

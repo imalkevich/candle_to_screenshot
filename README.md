@@ -73,6 +73,38 @@ Automatic cleanup: The target screenshot folder for the specified (ticker, inter
 
 If total candles <= skip value, no screenshots are produced.
 
+## Manual Labeling UI
+
+Use the labeling tool to classify each screenshot as a "situation" (Yes) or "normal" (No). The tool:
+
+* Reuses existing data & screenshots; generates them if missing.
+* Resumes where you left off by checking what has already been copied.
+* Stores labeled copies under a mirrored folder name inside `processed/` with two subfolders: `situation/` and `normal/`.
+* Supports keyboard shortcuts: Right Arrow = Yes, Left Arrow = No, Escape = Quit.
+
+Run:
+
+```powershell
+python label_screenshots.py --ticker BTCUSDT --interval 15m --time "1 month"
+```
+
+Folder layout produced:
+
+```
+processed/
+	BTCUSDT_15m_1month/
+		situation/
+			candle_00481.png
+			...
+		normal/
+			candle_00482.png
+			...
+```
+
+If screenshots are not present, they are generated first using the same defaults (`--skip 480`, `--max-candles 96`). Use `--refresh` to force a fresh CSV download prior to generation if needed.
+
+You can safely close the UI mid-session; on restart it will continue from the first unlabeled image.
+
 ## Future Ideas
 
 * Add exchange selection (Binance Futures, Bybit, etc.)

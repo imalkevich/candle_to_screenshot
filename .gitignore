@@ -76,6 +76,10 @@ Thumbs.db
 /screenshots/
 **/screenshots/
 
+# Labeled / processed datasets
+/processed/
+**/processed/
+
 # Environment variables / secrets
 *.env
 .env.local
