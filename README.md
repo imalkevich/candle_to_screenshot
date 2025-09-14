@@ -75,13 +75,37 @@ If total candles <= skip value, no screenshots are produced.
 
 ## Manual Labeling UI
 
-Use the labeling tool to classify each screenshot as a "situation" (Yes) or "normal" (No). The tool:
+The labeling tool now supports simple position life‑cycle tagging (Situation -> Exit) in addition to normal context classification.
 
-* Reuses existing data & screenshots; generates them if missing.
-* Resumes where you left off by checking what has already been copied.
-* Stores labeled copies under a mirrored folder name inside `processed/` with two subfolders: `situation/` and `normal/`.
-* Supports keyboard shortcuts: Enter = Yes, Space = No, Backspace = Back (Undo), Escape = Quit.
-* Back button (or Backspace) removes the last copied label file (if present) and shows the previous image for relabeling.
+Concepts:
+* A Situation (formerly Yes) marks the start of a position.
+* While a position is open, you can label interim frames as Continue (formerly No) until an Exit event occurs.
+* An Exit explicitly closes the last open Situation.
+* The UI enforces exactly one open position at a time: after a Situation you must Exit before opening a new one.
+
+Folders created under `processed/`:
+* `situation/` – Frames where a position is opened.
+* `continue` (still stored as `normal/` on disk for compatibility) – Frames during an open position (or ordinary background when no position is open). Internally we continue to write to `normal/` for simplicity.
+* `exit/` – Frames where a position is closed.
+
+Button / State Behavior:
+* Initial state (no open position): Buttons show `Yes (Situation)` and `No (Normal)`.
+	* Press Yes: screenshot copied to `situation/`, state switches to "open position".
+* Open position state: Buttons change to `Exit` (yellow) and `Continue` (red).
+	* Press Continue: screenshot copied to `normal/` (position remains open).
+	* Press Exit: screenshot copied to `exit/`, position closes; buttons revert to initial state.
+
+Resume Logic:
+* On startup the tool inspects counts: if `len(situation) > len(exit)` it assumes a position is still open and starts in Exit/Continue mode.
+* Undo (Backspace or Back button) removes the last file AND reverts state transitions (opening or closing) when appropriate.
+
+Keyboard Shortcuts:
+* Enter = Primary action (Situation OR Exit depending on state)
+* Space = Secondary action (Normal OR Continue depending on state)
+* Backspace = Undo last action / state change
+* Escape = Quit
+
+The prior left/right arrow bindings were removed to reduce accidental mislabels.
 
 Run:
 
@@ -89,7 +113,7 @@ Run:
 python label_screenshots.py --ticker BTCUSDT --interval 15m --time "1 month"
 ```
 
-Folder layout produced:
+Example folder layout produced:
 
 ```
 processed/
@@ -100,6 +124,9 @@ processed/
 		normal/
 			candle_00482.png
 			...
+		exit/
+			candle_00510.png
+			...
 ```
 
 If screenshots are not present, they are generated first using the same defaults (`--skip 480`, `--max-candles 96`). Use `--refresh` to force a fresh CSV download prior to generation if needed.
@@ -108,7 +135,7 @@ You can safely close the UI mid-session; on restart it will continue from the fi
 
 Restarting from scratch:
 
-Use `--restart` to clear previously labeled copies (in `processed/.../situation` and `processed/.../normal`) and begin again from the very first screenshot without touching the original `screenshots/` source images:
+Use `--restart` to clear previously labeled copies (situation / normal / exit) and begin again from the very first screenshot without touching the original `screenshots/` source images:
 
 ```powershell
 python label_screenshots.py --ticker BTCUSDT --interval 15m --time "1 month" --restart
