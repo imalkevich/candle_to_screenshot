@@ -3,7 +3,7 @@ from pathlib import Path
 import shutil
 import sys
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, ttk
 from PIL import Image, ImageTk
 import re
 
@@ -50,22 +50,25 @@ def determine_start_index(images, situation_dir: Path, normal_dir: Path, exit_di
 
 
 class LabelApp:
-    def __init__(self, root, images, situation_dir: Path, normal_dir: Path, exit_dir: Path, open_position: bool):
+    def __init__(self, root, images, situation_dir: Path, normal_dir: Path, exit_dir: Path, open_position: bool, ohlc_df):
         self.root = root
         self.images = images
         self.situation_dir = situation_dir
         self.normal_dir = normal_dir
         self.exit_dir = exit_dir
         self.open_position = open_position
+        self.ohlc_df = ohlc_df  # pandas DataFrame with OHLC data
         self.index = 0
         self.photo_cache = None
         self.history: list[tuple[Path, Path]] = []  # file actions
         self.state_history: list[str] = []  # 'OPEN' / 'CLOSE' sequence for quicker reasoning (optional)
+        self.trades: list[dict] = []  # {item_id, entry_idx, entry_price, exit_idx, exit_price}
+        self.open_trade_item_id: str | None = None
 
         # Window setup
         self.root.title('Candlestick Labeling')
         self.root.configure(bg='#222222')
-        self.root.geometry('1040x600')
+        self.root.geometry('1220x620')
 
         main_frame = tk.Frame(self.root, bg='#222222')
         main_frame.pack(fill=tk.BOTH, expand=True)
@@ -74,14 +77,20 @@ class LabelApp:
         left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(10,4), pady=8)
 
         right_frame = tk.Frame(main_frame, bg='#222222', bd=1, relief=tk.SUNKEN)
-        right_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=(4,10), pady=8)
+        right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, padx=(4,10), pady=8)
 
-        tk.Label(right_frame, text='History', bg='#222222', fg='#dddddd', font=('Arial', 10, 'bold')).pack(anchor='n', pady=(4,2))
-        self.history_list = tk.Listbox(right_frame, bg='#111111', fg='#e0e0e0', width=64, activestyle='none')
-        self.history_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=4, pady=4)
-        scroll = tk.Scrollbar(right_frame, command=self.history_list.yview)
-        scroll.pack(side=tk.RIGHT, fill=tk.Y)
-        self.history_list.config(yscrollcommand=scroll.set)
+        tk.Label(right_frame, text='Trades', bg='#222222', fg='#dddddd', font=('Arial', 10, 'bold')).pack(anchor='n', pady=(4,2))
+        columns = ('entry_date', 'entry_price', 'exit_date', 'exit_price', 'result')
+        self.trade_table = ttk.Treeview(right_frame, columns=columns, show='headings', height=24)
+        headings = ['Entry Date', 'Entry Price', 'Exit Date', 'Exit Price', 'Result']
+        widths = [140, 90, 140, 90, 80]
+        for col, head, w in zip(columns, headings, widths):
+            self.trade_table.heading(col, text=head)
+            self.trade_table.column(col, width=w, anchor='center')
+        vsb = ttk.Scrollbar(right_frame, orient='vertical', command=self.trade_table.yview)
+        self.trade_table.configure(yscrollcommand=vsb.set)
+        self.trade_table.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=4, pady=4)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
 
         # Chart display
         self.canvas = tk.Label(left_frame, bg='#222222')
@@ -100,15 +109,20 @@ class LabelApp:
         self.status = tk.Label(left_frame, text='', bg='#222222', fg='#cccccc')
         self.status.pack(pady=4)
 
+        # Candle info label (time, O,H,L,C,V)
+        self.candle_info = tk.Label(left_frame, text='', bg='#222222', fg='#aaaaaa', font=('Consolas', 9))
+        self.candle_info.pack(pady=(0,6))
+
         # Shortcuts
         self.root.bind('<Return>', lambda e: self.primary_action())
         self.root.bind('<space>', lambda e: self.secondary_action())
         self.root.bind('<BackSpace>', lambda e: self.undo_last())
         self.root.bind('<Escape>', lambda e: self.root.quit())
 
+        # Initial rendering and preload of existing trades
         self.update_image()
         self.update_button_states()
-        self.preload_history()
+        self.preload_trades()
 
     # --- State & UI helpers ---
     def update_button_states(self):
@@ -128,29 +142,139 @@ class LabelApp:
         else:
             self.mark_situation()
 
-    def _log_history(self, filename: str, label: str):
-        base = filename.split('.')[0]
-        entry = f"{base}    {label}"
-        self.history_list.insert(tk.END, entry)
-        self.history_list.yview_moveto(1.0)
-
-    def preload_history(self):
-        """Populate history list from existing labeled situation/exit images on resume.
-        Does not push entries onto self.history (undo stack) because they are prior committed actions.
+    # --- Trade helpers ---
+    def _filename_to_row_index(self, filename: str) -> int | None:
+        """Extract 0-based row index from candle_00001 style filename.
+        Returns None if pattern not matched or out of range.
         """
-        # Collect events with their base filename for deterministic ordering
-        events = []  # (base, filename, label)
-        for folder, label in ((self.situation_dir, 'Situation triggered'), (self.exit_dir, 'Exit')):
-            for p in folder.glob('candle_*.png'):
-                base = p.stem  # candle_00001
-                events.append((base, p.name, label))
-        # Sort by base filename (portion before whitespace in final entry)
-        events.sort(key=lambda x: x[0])
-        for base, fname, label in events:
-            entry = f"{base}    {label}"
-            self.history_list.insert(tk.END, entry)
-        if events:
-            self.history_list.yview_moveto(1.0)
+        m = re.search(r'(\d+)', filename)
+        if not m:
+            return None
+        # Filenames are 1-based; convert to 0-based
+        idx = int(m.group(1)) - 1
+        if 0 <= idx < len(self.ohlc_df):
+            return idx
+        return None
+
+    # --- Unified candle data retrieval ---
+    def _get_candle_data(self, idx: int):
+        """Return tuple (timestamp, open, high, low, close, volume) for a dataframe row index.
+        Handles multiple possible column naming conventions and timestamp fallbacks.
+        Returns None if idx out of range or an unexpected error occurs.
+        Timestamp preference order: open_time -> close_time -> index value -> ''
+        Column name variants supported: Open/High/Low/Close/Volume OR lower-case equivalents.
+        """
+        try:
+            if idx < 0 or idx >= len(self.ohlc_df):
+                return None
+            row = self.ohlc_df.iloc[idx]
+            cols = self.ohlc_df.columns
+            # Timestamp resolution
+            if 'open_time' in cols:
+                ts = row['open_time']
+            elif 'close_time' in cols:
+                ts = row['close_time']
+            else:
+                try:
+                    ts = self.ohlc_df.index[idx]
+                except Exception:
+                    ts = ''
+            # Column variants
+            open_col = 'Open' if 'Open' in row else ('open' if 'open' in row else None)
+            high_col = 'High' if 'High' in row else ('high' if 'high' in row else None)
+            low_col = 'Low' if 'Low' in row else ('low' if 'low' in row else None)
+            close_col = 'Close' if 'Close' in row else ('close' if 'close' in row else None)
+            vol_col = 'Volume' if 'Volume' in row else ('volume' if 'volume' in row else None)
+            if not all([open_col, high_col, low_col, close_col]):
+                # Required OHLC columns missing – return None to signal failure
+                return None
+            o = row[open_col]
+            h = row[high_col]
+            low_v = row[low_col]
+            c = row[close_col]
+            v = row[vol_col] if vol_col else ''
+            return ts, o, h, low_v, c, v
+        except Exception:
+            return None
+
+    def _row_entry_values(self, idx: int):
+        data = self._get_candle_data(idx)
+        if not data:
+            return '', 0.0
+        ts, _o, _h, _l, c, _v = data
+        try:
+            price = float(c)
+        except Exception:
+            price = 0.0
+        return ts, price
+
+    def _add_trade_entry(self, filename: str):
+        idx = self._filename_to_row_index(filename)
+        if idx is None:
+            return None
+        dt, price = self._row_entry_values(idx)
+        item_id = self.trade_table.insert('', tk.END, values=(dt, f"{price:.2f}", '', '', ''))
+        self.trades.append({'item_id': item_id, 'entry_idx': idx, 'entry_price': price, 'exit_idx': None, 'exit_price': None})
+        self.open_trade_item_id = item_id
+        return item_id
+
+    def _close_trade(self, filename: str):
+        if not self.open_trade_item_id:
+            return
+        idx = self._filename_to_row_index(filename)
+        if idx is None:
+            return
+        dt, price = self._row_entry_values(idx)
+        # Find trade dict
+        trade = next((t for t in reversed(self.trades) if t['item_id'] == self.open_trade_item_id), None)
+        if not trade:
+            return
+        trade['exit_idx'] = idx
+        trade['exit_price'] = price
+        # Sell-only (short/mean-reversion) assumption: profit when price after entry is LOWER
+        # So result = entry - exit
+        result = trade['entry_price'] - price
+        # Update tree item
+        self.trade_table.item(self.open_trade_item_id, values=(
+            self.trade_table.set(self.open_trade_item_id, 'entry_date'),
+            self.trade_table.set(self.open_trade_item_id, 'entry_price'),
+            dt, f"{price:.2f}", f"{result:.2f}"
+        ))
+        # Clear open pointer
+        self.open_trade_item_id = None
+
+    def preload_trades(self):
+        """Reconstruct trade table from existing situation/exit images.
+        Pair situations with the next chronological exit after them (if any).
+        """
+        situation_files = sorted(self.situation_dir.glob('candle_*.png'), key=lambda p: p.name)
+        exit_files = sorted(self.exit_dir.glob('candle_*.png'), key=lambda p: p.name)
+        used_exits = set()
+        # Build list of available exits with numeric index for efficient pairing
+        def file_num(p: Path):
+            m = re.search(r'(\d+)', p.name)
+            return int(m.group(1)) if m else 10**12
+        exit_with_nums = [(file_num(f), f) for f in exit_files]
+        for s in situation_files:
+            s_num = file_num(s)
+            # find earliest exit with num > s_num not used
+            candidate = None
+            for num, f in exit_with_nums:
+                if num > s_num and f not in used_exits:
+                    candidate = f
+                    used_exits.add(f)
+                    break
+            # Add entry row
+            self._add_trade_entry(s.name)
+            if candidate is not None:
+                # Close it
+                prev_open_id = self.open_trade_item_id
+                self._close_trade(candidate.name)
+                # Ensure open pointer stays None after closing
+                if self.open_trade_item_id == prev_open_id:
+                    self.open_trade_item_id = None
+        # If resume had an open position, open_trade_item_id points to last row
+        # No further action needed
 
     def secondary_action(self):
         # Always normal/continue
@@ -162,7 +286,8 @@ class LabelApp:
         self.copy_current(self.situation_dir)
         self.open_position = True
         self.history.append(('STATE', 'OPEN'))
-        self._log_history(fname, 'Situation triggered')
+        # Add trade entry row
+        self._add_trade_entry(fname)
         self.advance()
         self.update_button_states()
 
@@ -176,7 +301,8 @@ class LabelApp:
         self.copy_current(self.exit_dir)
         self.open_position = False
         self.history.append(('STATE', 'CLOSE'))
-        self._log_history(fname, 'Exit')
+        # Close trade row
+        self._close_trade(fname)
         self.advance()
         self.update_button_states()
 
@@ -196,6 +322,7 @@ class LabelApp:
             self.status.config(text=f"Done: {len(self.images)}/{len(self.images)}")
             self.btn_yes.config(state=tk.DISABLED)
             self.btn_no.config(state=tk.DISABLED)
+            self.candle_info.config(text='')
             return
         try:
             with Image.open(img_path) as im:
@@ -207,6 +334,19 @@ class LabelApp:
         except Exception as e:
             self.canvas.config(text=f"Error loading image: {e}")
         self.status.config(text=f"Image {self.index+1}/{len(self.images)}: {img_path.name}")
+        self.update_candle_info(img_path.name)
+
+    def update_candle_info(self, filename: str):
+        idx = self._filename_to_row_index(filename)
+        if idx is None:
+            self.candle_info.config(text='')
+            return
+        data = self._get_candle_data(idx)
+        if not data:
+            self.candle_info.config(text='')
+            return
+        ts, o, h, low_v, c, v = data
+        self.candle_info.config(text=f"{ts}  O:{o} H:{h} L:{low_v} C:{c} V:{v}")
 
     def copy_current(self, destination_dir: Path):
         img_path = self.current_image()
@@ -238,19 +378,34 @@ class LabelApp:
             return
         last_item = self.history.pop()
         if isinstance(last_item, tuple) and last_item and last_item[0] == 'STATE':
-            # State marker, revert open/close flag
             marker_type = last_item[1]
             if marker_type == 'OPEN':
-                # We had opened a position; revert to closed
+                # Undo an OPEN: remove last trade row
+                if self.trades:
+                    trade = self.trades.pop()
+                    try:
+                        self.trade_table.delete(trade['item_id'])
+                    except Exception:
+                        pass
                 self.open_position = False
+                self.open_trade_item_id = None
             elif marker_type == 'CLOSE':
-                # We had closed a position; revert to open
+                # Undo a CLOSE: find most recent closed trade and clear exit fields
+                for trade in reversed(self.trades):
+                    if trade['exit_idx'] is not None:
+                        trade['exit_idx'] = None
+                        trade['exit_price'] = None
+                        # Update row removing exit columns
+                        self.trade_table.item(trade['item_id'], values=(
+                            self.trade_table.set(trade['item_id'], 'entry_date'),
+                            self.trade_table.set(trade['item_id'], 'entry_price'),
+                            '', '', ''
+                        ))
+                        self.open_trade_item_id = trade['item_id']
+                        break
                 self.open_position = True
             self.status.config(text=f"Reverted state change ({marker_type}).")
             self.update_button_states()
-            # Remove last history list entry (situation triggered or exit) if exists
-            if self.history_list.size() > 0:
-                self.history_list.delete(self.history_list.size() - 1)
             return
         # Otherwise it's a file copy tuple (img_path, destination_dir)
         last_img, last_dir = last_item
@@ -325,8 +480,10 @@ def main():
     exit_count = len(list(exit_dir.glob('candle_*.png')))
     open_position = situation_count > exit_count
 
+    # Load OHLC dataframe for trade table (ensure it's loaded even if screenshots pre-exist)
+    ohlc_df = load_dataframe(csv_path)
     root = tk.Tk()
-    app = LabelApp(root, images, situation_dir, normal_dir, exit_dir, open_position)
+    app = LabelApp(root, images, situation_dir, normal_dir, exit_dir, open_position, ohlc_df)
     app.set_index(start_index)
     root.mainloop()
     return 0
