@@ -56,6 +56,8 @@ class LabelApp:
         self.normal_dir = normal_dir
         self.index = 0
         self.photo_cache = None
+        # history stack of tuples (image_path, destination_dir) for undo
+        self.history: list[tuple[Path, Path]] = []
 
         self.root.title('Candlestick Labeling')
         self.root.geometry('600x600')
@@ -71,10 +73,14 @@ class LabelApp:
         btn_frame.pack(pady=10)
 
         self.btn_yes = tk.Button(btn_frame, text='Yes (Situation)', width=18, command=self.mark_yes, bg='#2e7d32', fg='white')
-        self.btn_yes.grid(row=0, column=0, padx=10)
+        self.btn_yes.grid(row=0, column=0, padx=10, pady=(0,4))
 
         self.btn_no = tk.Button(btn_frame, text='No (Normal)', width=18, command=self.mark_no, bg='#c62828', fg='white')
-        self.btn_no.grid(row=0, column=1, padx=10)
+        self.btn_no.grid(row=0, column=1, padx=10, pady=(0,4))
+
+        # Back button centered beneath Yes/No spanning both columns
+        self.btn_back = tk.Button(btn_frame, text='Back', width=20, command=self.undo_last, bg='#000000', fg='white')
+        self.btn_back.grid(row=1, column=0, columnspan=2, pady=(6,0))
 
         self.status = tk.Label(self.root, text='', bg='#222222', fg='#cccccc')
         self.status.pack(pady=5)
@@ -82,6 +88,7 @@ class LabelApp:
         self.root.bind('<Left>', lambda e: self.mark_no())
         self.root.bind('<Right>', lambda e: self.mark_yes())
         self.root.bind('<Escape>', lambda e: self.root.quit())
+        self.root.bind('<BackSpace>', lambda e: self.undo_last())
 
         self.update_image()
 
@@ -121,6 +128,8 @@ class LabelApp:
         try:
             if not target.exists():
                 shutil.copy2(img_path, target)
+                # push to history only when newly copied
+                self.history.append((img_path, destination_dir))
         except Exception as e:
             messagebox.showerror('Copy Error', f'Failed to copy {img_path.name}: {e}')
 
@@ -135,6 +144,23 @@ class LabelApp:
     def mark_no(self):
         self.copy_current(self.normal_dir)
         self.advance()
+
+    def undo_last(self):
+        if not self.history:
+            self.status.config(text=f"No action to undo. {self.index+1}/{len(self.images)}")
+            return
+        last_img, last_dir = self.history.pop()
+        # Remove copied file if it still exists
+        target = last_dir / last_img.name
+        try:
+            if target.exists():
+                target.unlink()
+        except Exception as e:
+            messagebox.showwarning('Undo Warning', f'Could not remove {target.name}: {e}')
+        # Move index back one (cannot go below 0)
+        self.index = max(0, self.index - 1)
+        self.update_image()
+        self.status.config(text=f"Undid labeling of {last_img.name}. Re-label this image.")
 
 
 def main():

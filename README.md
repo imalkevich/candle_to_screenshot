@@ -80,7 +80,8 @@ Use the labeling tool to classify each screenshot as a "situation" (Yes) or "nor
 * Reuses existing data & screenshots; generates them if missing.
 * Resumes where you left off by checking what has already been copied.
 * Stores labeled copies under a mirrored folder name inside `processed/` with two subfolders: `situation/` and `normal/`.
-* Supports keyboard shortcuts: Right Arrow = Yes, Left Arrow = No, Escape = Quit.
+* Supports keyboard shortcuts: Right Arrow = Yes, Left Arrow = No, Backspace = Undo last label, Escape = Quit.
+* Back button / Backspace removes the last copied label file (if present) and shows the previous image for relabeling.
 
 Run:
 
