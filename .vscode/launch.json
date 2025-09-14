@@ -97,6 +97,31 @@
         "--refresh"
       ]
     }
+    ,
+    {
+      "name": "Label Screenshots: Defaults (Restart)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/label_screenshots.py",
+      "args": [
+        "--ticker", "BTCUSDT",
+        "--interval", "15m",
+        "--time", "1 month",
+        "--restart"
+      ]
+    },
+    {
+      "name": "Label Screenshots: Inputs (Restart)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/label_screenshots.py",
+      "args": [
+        "--ticker", "${input:ticker}",
+        "--interval", "${input:interval}",
+        "--time", "${input:timeRange}",
+        "--restart"
+      ]
+    }
   ],
   "inputs": [
     {

@@ -105,6 +105,14 @@ If screenshots are not present, they are generated first using the same defaults
 
 You can safely close the UI mid-session; on restart it will continue from the first unlabeled image.
 
+Restarting from scratch:
+
+Use `--restart` to clear previously labeled copies (in `processed/.../situation` and `processed/.../normal`) and begin again from the very first screenshot without touching the original `screenshots/` source images:
+
+```powershell
+python label_screenshots.py --ticker BTCUSDT --interval 15m --time "1 month" --restart
+```
+
 ## Future Ideas
 
 * Add exchange selection (Binance Futures, Bybit, etc.)

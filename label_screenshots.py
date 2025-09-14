@@ -145,6 +145,7 @@ def main():
     parser.add_argument('--refresh', action='store_true', help='Re-fetch data even if CSV already exists (propagated)')
     parser.add_argument('--skip', type=int, default=480, help='Skip first N candles when generating screenshots if generation needed')
     parser.add_argument('--max-candles', type=int, default=96, dest='max_candles', help='Max candles per screenshot window if generation needed (default 96)')
+    parser.add_argument('--restart', action='store_true', help='Start labeling from the first screenshot (clears existing labeled copies in processed folder)')
     args = parser.parse_args()
 
     # Ensure OHLC data file exists (reuse generation logic's ensure_data)
@@ -167,8 +168,23 @@ def main():
 
     base, situation_dir, normal_dir = build_processed_subfolders(args.ticker, args.interval, args.time)
 
+    # If restart requested, clear existing labeled files only (not screenshots)
+    if args.restart:
+        removed = 0
+        for d in (situation_dir, normal_dir):
+            for f in d.glob('candle_*.png'):
+                try:
+                    f.unlink()
+                    removed += 1
+                except Exception as e:
+                    print(f"[WARN] Could not remove {f}: {e}")
+        if removed:
+            print(f"[INFO] Restart requested: removed {removed} previously labeled images.")
+        else:
+            print("[INFO] Restart requested: no existing labeled images to remove.")
+
     # Determine resume position
-    start_index = determine_start_index(images, situation_dir, normal_dir)
+    start_index = 0 if args.restart else determine_start_index(images, situation_dir, normal_dir)
     if start_index >= len(images):
         print('[INFO] All images already labeled.')
         return 0
