@@ -73,79 +73,150 @@ Automatic cleanup: The target screenshot folder for the specified (ticker, inter
 
 If total candles <= skip value, no screenshots are produced.
 
-## Manual Labeling UI
+## Manual Labeling UI (Directional Buy/Sell Trades)
 
-The labeling tool now supports simple position life‑cycle tagging (Situation -> Exit) in addition to normal context classification.
+The labeling interface now supports full directional trade annotation with separate Buy and Sell entries and their corresponding exits, plus neutral ("Next") frames. It also computes key trade statistics live.
 
-Concepts:
-* A Situation (formerly Yes) marks the start of a position.
-* While a position is open, you can label interim frames as Continue (formerly No) until an Exit event occurs.
-* An Exit explicitly closes the last open Situation.
-* The UI enforces exactly one open position at a time: after a Situation you must Exit before opening a new one.
+### Folder Schema
 
-Folders created under `processed/`:
-* `situation/` – Frames where a position is opened.
-* `continue` (still stored as `normal/` on disk for compatibility) – Frames during an open position (or ordinary background when no position is open). Internally we continue to write to `normal/` for simplicity.
-* `exit/` – Frames where a position is closed.
+For a given (ticker, interval, time range) a processed directory is created:
 
-Button / State Behavior:
-* Initial state (no open position): Buttons show `Yes (Situation)` and `No (Normal)`.
-	* Press Yes: screenshot copied to `situation/`, state switches to "open position".
-* Open position state: Buttons change to `Exit` (yellow) and `Continue` (red).
-	* Press Continue: screenshot copied to `normal/` (position remains open).
-	* Press Exit: screenshot copied to `exit/`, position closes; buttons revert to initial state.
+```
+processed/<TICKER>_<INTERVAL>_<TIMERANGE>/
+	normal/      # Neutral / context frames (no event) or mid-trade continuation
+	buy/         # Entry screenshots for long (BUY) trades
+	buy_exit/    # Exit screenshots closing BUY trades
+	sell/        # Entry screenshots for short (SELL) trades
+	sell_exit/   # Exit screenshots closing SELL trades
+```
 
-Resume Logic:
-* On startup the tool inspects counts: if `len(situation) > len(exit)` it assumes a position is still open and starts in Exit/Continue mode.
-* Undo (Backspace or Back button) removes the last file AND reverts state transitions (opening or closing) when appropriate.
+Exactly one trade (either BUY or SELL) can be open at a time. Intervening frames while a trade is open should be labeled with `Next` (goes to `normal/`).
 
-Keyboard Shortcuts:
-* Enter = Primary action (Situation OR Exit depending on state)
-* Space = Secondary action (Normal OR Continue depending on state)
-* Backspace = Undo last action / state change
+### UI Buttons & States
+
+Initial (no open trade):
+* Buy (green) – records entry in `buy/`
+* Sell (red) – records entry in `sell/`
+* Next (gray) – records neutral frame in `normal/`
+
+When a BUY trade is open:
+* Buy button converts to `Exit (Buy)` (yellow) – records exit in `buy_exit/`
+* Sell disabled
+* Next continues adding neutral frames to `normal/`
+
+When a SELL trade is open:
+* Sell button converts to `Exit (Sell)` (yellow) – records exit in `sell_exit/`
+* Buy disabled
+* Next continues adding neutral frames to `normal/`
+
+### Keyboard Shortcuts
+
+* Up Arrow = Buy / Exit (Buy)
+* Down Arrow = Sell / Exit (Sell)
+* Right Arrow = Next (neutral)
+* Backspace = Back (undo last atomic action)
 * Escape = Quit
 
-The prior left/right arrow bindings were removed to reduce accidental mislabels.
+### Status Bar
 
-Run:
+Displays only: `candle_XXXXX.png current/total` (e.g. `candle_01234.png 1234/2400`). No extra narration is added so the filename is uncluttered.
+
+### Trade Table & Statistics
+
+The right panel lists each trade with columns:
+`Side | Entry Date | Entry Price | Exit Date | Exit Price | Result`
+
+Result (PnL) calculation:
+* BUY: `exit_price - entry_price`
+* SELL: `entry_price - exit_price`
+
+Live statistics (closed trades only):
+* Number of trades
+* Net Profit/Loss
+* Win/Loss count and ratio
+* Profit Factor (gross profit / gross loss, ∞ if no losses)
+
+### Resume Behavior
+
+On startup the application:
+1. Scans all five processed subfolders.
+2. Reconstructs each trade by pairing entries with the next chronological matching exit on the same side.
+3. Determines if a trade is currently open (unmatched entry).
+4. Rebuilds an internal synthetic history so the Back (undo) button works uniformly for resumed sessions.
+
+The next unlabeled screenshot (first filename not present in any processed subfolder) becomes the current image.
+
+### Undo Logic
+
+`Back` performs a single atomic undo:
+* If the last action was an entry: removes the entry file and deletes the row from the trade table.
+* If the last action was an exit: removes the exit file and reverts the trade to open (clears exit columns).
+* If the last action was a neutral frame: deletes the neutral file only.
+* Index position moves back one image so you can re-label immediately.
+
+During resumed sessions this behavior is consistent because the synthetic history mimics original labeling order.
+
+### Running the Labeler
 
 ```powershell
 python label_screenshots.py --ticker BTCUSDT --interval 15m --time "1 month"
 ```
 
-Example folder layout produced:
+If source screenshots do not exist they are generated first (same defaults as `generate_screenshots.py`: `--skip 480`, `--max-candles 96`). Use `--refresh` to re-download OHLC data before generation.
 
-```
-processed/
-	BTCUSDT_15m_1month/
-		situation/
-			candle_00481.png
-			...
-		normal/
-			candle_00482.png
-			...
-		exit/
-			candle_00510.png
-			...
-```
+### Restarting From Scratch
 
-If screenshots are not present, they are generated first using the same defaults (`--skip 480`, `--max-candles 96`). Use `--refresh` to force a fresh CSV download prior to generation if needed.
-
-You can safely close the UI mid-session; on restart it will continue from the first unlabeled image.
-
-Restarting from scratch:
-
-Use `--restart` to clear previously labeled copies (situation / normal / exit) and begin again from the very first screenshot without touching the original `screenshots/` source images:
+Use `--restart` to delete previously labeled copies (`normal/`, `buy/`, `buy_exit/`, `sell/`, `sell_exit/`) without touching the original `screenshots/` directory:
 
 ```powershell
 python label_screenshots.py --ticker BTCUSDT --interval 15m --time "1 month" --restart
 ```
 
+### Data & Index Mapping
+
+Screenshot filenames (`candle_#####.png`) are 1‑based; they map deterministically to the underlying dataframe row indices (converted to 0‑based internally). The generation process begins at `skip + 1`, so screenshot `candle_00481.png` corresponds to dataframe index `480` when the default skip (480) is used.
+
+### Limitations / Notes
+
+* Only one open trade side at a time is supported (no overlapping long & short positions).
+* Deleting files manually from processed folders while the app is closed can desynchronize trade reconstruction (run `--restart` or re-label to correct).
+* Neutral frames are not distinguished between “in-trade continuation” and “no trade” states—both go into `normal/`.
+* Undo does not span across sessions beyond what can be inferred from existing files; a persistent event log could be added later.
+
+---
+
+### Example Processed Layout (Directional)
+
+```
+processed/
+	BTCUSDT_15m_1month/
+		normal/
+			candle_00482.png
+			...
+		buy/
+			candle_00510.png
+			...
+		buy_exit/
+			candle_00525.png
+			...
+		sell/
+			candle_00600.png
+			...
+		sell_exit/
+			candle_00618.png
+			...
+```
+
 ## Future Ideas
 
-* Add exchange selection (Binance Futures, Bybit, etc.)
-* Add output to Parquet
-* Add plotting / screenshot generation
+* Redo stack / forward navigation
+* Persistent event log (JSON) to allow perfect reconstruction beyond filename inference
+* Per-side aggregated statistics & equity curve plotting
+* Optional color coding of trade table rows (win/loss coloring)
+* CSV/Parquet export of labeled events and trades
+* Multi-exchange data sources (Futures, Bybit, etc.)
+* ML pipeline integration scripts (dataset manifest generation)
+* Filtering / search in trade table
 
 ---
 Feel free to extend this script further; open an issue or adapt it for additional workflows.
