@@ -160,6 +160,8 @@ def download_ohlc(symbol: str, interval: str, time_interval: str, source: Litera
         out['taker_buy_base_asset_volume'] = 0
         out['taker_buy_quote_asset_volume'] = 0
         out['ignore'] = 0
+        # Round OHLC values to 4 decimal places for forex consistency
+        out[['open','high','low','close']] = out[['open','high','low','close']].astype(float).round(4)
         out = out[['open_time','open','high','low','close','volume','close_time','quote_asset_volume','number_of_trades','taker_buy_base_asset_volume','taker_buy_quote_asset_volume','ignore']]
         return out
 
