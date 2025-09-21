@@ -155,7 +155,7 @@ class LabelApp:
         # Shortcuts
         self.root.bind('<Up>', lambda e: self.open_trade('BUY'))
         self.root.bind('<Down>', lambda e: self.open_trade('SELL'))
-        self.root.bind('<Right>', lambda e: self.mark_normal())
+        self.root.bind('<space>', lambda e: self.mark_normal())
         self.root.bind('<BackSpace>', lambda e: self.undo_last())
         self.root.bind('<Escape>', lambda e: self.root.quit())
 
@@ -297,7 +297,7 @@ class LabelApp:
         if idx is None:
             return None
         dt, price = self._row_entry_values(idx)
-        item_id = self.trade_table.insert('', tk.END, values=(side, dt, f"{price:.2f}", '', '', ''))
+        item_id = self.trade_table.insert('', tk.END, values=(side, dt, f"{price:.4f}", '', '', ''))
         self.trades.append({'item_id': item_id, 'entry_idx': idx, 'entry_price': price,
                             'exit_idx': None, 'exit_price': None, 'side': side})
         self.open_trade_item_id = item_id
@@ -324,7 +324,7 @@ class LabelApp:
             trade['side'],
             self.trade_table.set(self.open_trade_item_id, 'entry_date'),
             self.trade_table.set(self.open_trade_item_id, 'entry_price'),
-            dt, f"{price:.2f}", f"{result:.2f}"
+            dt, f"{price:.4f}", f"{result:.4f}"
         ))
         self.open_trade_item_id = None
         self.update_stats()
@@ -617,10 +617,11 @@ class LabelApp:
             pf = float('inf') if gross_profit > 0 else 0.0
         else:
             pf = gross_profit / gross_loss
+
         self.stat_trades.config(text=f"Number of trades: {num}")
-        self.stat_net.config(text=f"Profit/Loss: {net:.2f}")
+        self.stat_net.config(text=f"Profit/Loss: {net:.4f}")
         self.stat_ratio.config(text=f"Profit/Loss ratio: {ratio_text}")
-        self.stat_factor.config(text=f"Profit factor: {pf:.2f}" if pf != float('inf') else "Profit factor: ∞")
+        self.stat_factor.config(text=f"Profit factor: {pf:.4f}" if pf != float('inf') else "Profit factor: ∞")
 
 
 def main():
@@ -629,13 +630,14 @@ def main():
     parser.add_argument('--interval', required=True, help='Chart interval, e.g. 15m')
     parser.add_argument('--time', required=True, help='Time interval, e.g. "1 month"')
     parser.add_argument('--refresh', action='store_true', help='Re-fetch data even if CSV already exists (propagated)')
+    parser.add_argument('--source', choices=['binance','forex'], default='binance', help='Data source (binance or forex) used for underlying CSV selection.')
     parser.add_argument('--skip', type=int, default=480, help='Skip first N candles when generating screenshots if generation needed')
     parser.add_argument('--max-candles', type=int, default=96, dest='max_candles', help='Max candles per screenshot window if generation needed (default 96)')
     parser.add_argument('--restart', action='store_true', help='Start labeling from the first screenshot (clears existing labeled copies in processed folder)')
     args = parser.parse_args()
 
-    # Ensure OHLC data file exists (reuse generation logic's ensure_data)
-    csv_path = ensure_data(args.ticker, args.interval, args.time, args.refresh)
+    # Ensure OHLC data file exists (reuse generation logic's ensure_data) with source
+    csv_path = ensure_data(args.ticker, args.interval, args.time, args.refresh, args.source)
 
     # Ensure screenshots exist; if not, generate them by invoking the same functions
     screenshot_folder = build_screenshot_folder(args.ticker, args.interval, args.time)

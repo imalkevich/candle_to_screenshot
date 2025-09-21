@@ -4,24 +4,25 @@ import pandas as pd
 import mplfinance as mpf
 import re
 import shutil
+from typing import Literal
 from download_ohlc import download_ohlc  # direct function import
 
 DATA_DIR = Path('data')
 SCREENSHOTS_DIR = Path('screenshots')
 
-
-def build_data_filename(ticker: str, interval: str, time_range: str) -> Path:
+def build_data_filename(ticker: str, interval: str, time_range: str, source: Literal['binance', 'forex']) -> Path:
+    """Return preferred CSV filename including source suffix (spot/fx)."""
     sanitized_time = re.sub(r'\s+', '', time_range.lower())
-    filename = f"{ticker.upper()}_{interval}_{sanitized_time}.csv"
+    suffix = 'fx' if source == 'forex' else 'spot'
+    filename = f"{ticker.upper()}_{interval}_{sanitized_time}_{suffix}.csv"
     return DATA_DIR / filename
 
-
-def ensure_data(ticker: str, interval: str, time_range: str, refresh: bool) -> Path:
+def ensure_data(ticker: str, interval: str, time_range: str, refresh: bool, source: Literal['binance', 'forex']) -> Path:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    csv_path = build_data_filename(ticker, interval, time_range)
+    csv_path = build_data_filename(ticker, interval, time_range, source)
     if refresh or not csv_path.exists():
-        print(f"[INFO] Fetching data directly via function call: {ticker} {interval} {time_range}")
-        df = download_ohlc(ticker, interval, time_range)
+        print(f"[INFO] Fetching data directly via function call: {ticker} {interval} {time_range} source={source}")
+        df = download_ohlc(ticker, interval, time_range, source=source)
         df.to_csv(csv_path, index=False)
     else:
         print(f"[INFO] Using existing data file: {csv_path}")
@@ -94,15 +95,16 @@ def generate_screenshots(df: pd.DataFrame, ticker: str, interval: str, time_rang
 
 def main():
     parser = argparse.ArgumentParser(description='Generate sequential candlestick screenshots from OHLC data.')
-    parser.add_argument('--ticker', required=True, help='Ticker symbol, e.g. BTCUSDT')
+    parser.add_argument('--ticker', required=True, help='Ticker symbol, e.g. BTCUSDT or GBPUSD')
     parser.add_argument('--interval', required=True, help='Chart interval, e.g. 15m')
     parser.add_argument('--time', required=True, help='Time interval, e.g. "1 month" or "1 year"')
+    parser.add_argument('--source', choices=['binance','forex'], default='binance', help='Data source matching download_ohlc (default binance).')
     parser.add_argument('--refresh', action='store_true', help='Re-fetch data even if CSV already exists')
     parser.add_argument('--skip', type=int, default=480, help='Number of initial candles to skip for screenshot generation (default 480)')
     parser.add_argument('--max-candles', type=int, default=96, dest='max_candles', help='Maximum number of most recent candles to display in each screenshot window (default 96 = 1 day of 15m candles)')
     args = parser.parse_args()
 
-    csv_path = ensure_data(args.ticker, args.interval, args.time, args.refresh)
+    csv_path = ensure_data(args.ticker, args.interval, args.time, args.refresh, args.source)
     df = load_dataframe(csv_path)
     generate_screenshots(df, args.ticker, args.interval, args.time, start_skip=args.skip, max_candles=args.max_candles)
 
