@@ -79,18 +79,34 @@ class LabelApp:
         right_frame = tk.Frame(main_frame, bg='#222222', bd=1, relief=tk.SUNKEN)
         right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, padx=(4,10), pady=8)
 
-        tk.Label(right_frame, text='Trades', bg='#222222', fg='#dddddd', font=('Arial', 10, 'bold')).pack(anchor='n', pady=(4,2))
+        # Right panel layout: separate frames for Trades and Statistics
+        trades_section = tk.Frame(right_frame, bg='#222222')
+        trades_section.pack(fill=tk.BOTH, expand=True, padx=0, pady=(4,2))
+        tk.Label(trades_section, text='Trades', bg='#222222', fg='#dddddd', font=('Arial', 10, 'bold')).pack(anchor='n', pady=(0,2))
         columns = ('entry_date', 'entry_price', 'exit_date', 'exit_price', 'result')
-        self.trade_table = ttk.Treeview(right_frame, columns=columns, show='headings', height=24)
+        # Reduce height so statistics fit without needing scroll
+        self.trade_table = ttk.Treeview(trades_section, columns=columns, show='headings', height=18)
         headings = ['Entry Date', 'Entry Price', 'Exit Date', 'Exit Price', 'Result']
         widths = [140, 90, 140, 90, 80]
         for col, head, w in zip(columns, headings, widths):
             self.trade_table.heading(col, text=head)
             self.trade_table.column(col, width=w, anchor='center')
-        vsb = ttk.Scrollbar(right_frame, orient='vertical', command=self.trade_table.yview)
+        vsb = ttk.Scrollbar(trades_section, orient='vertical', command=self.trade_table.yview)
         self.trade_table.configure(yscrollcommand=vsb.set)
         self.trade_table.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=4, pady=4)
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        # Statistics separate section
+        stats_section = tk.Frame(right_frame, bg='#222222')
+        stats_section.pack(fill=tk.X, padx=4, pady=(4,6))
+        tk.Label(stats_section, text='Statistics', bg='#222222', fg='#dddddd', font=('Arial', 10, 'bold')).grid(row=0, column=0, columnspan=2, sticky='w')
+        self.stat_trades = tk.Label(stats_section, text='Number of trades: 0', bg='#222222', fg='#aaaaaa', anchor='w')
+        self.stat_trades.grid(row=1, column=0, columnspan=2, sticky='w')
+        self.stat_net = tk.Label(stats_section, text='Profit/Loss: 0.00', bg='#222222', fg='#aaaaaa', anchor='w')
+        self.stat_net.grid(row=2, column=0, columnspan=2, sticky='w')
+        self.stat_ratio = tk.Label(stats_section, text='Profit/Loss ratio: 0 / 0', bg='#222222', fg='#aaaaaa', anchor='w')
+        self.stat_ratio.grid(row=3, column=0, columnspan=2, sticky='w')
+        self.stat_factor = tk.Label(stats_section, text='Profit factor: 0.00', bg='#222222', fg='#aaaaaa', anchor='w')
+        self.stat_factor.grid(row=4, column=0, columnspan=2, sticky='w')
 
         # Chart display
         self.canvas = tk.Label(left_frame, bg='#222222')
@@ -123,6 +139,7 @@ class LabelApp:
         self.update_image()
         self.update_button_states()
         self.preload_trades()
+        self.update_stats()
 
     # --- State & UI helpers ---
     def update_button_states(self):
@@ -242,6 +259,7 @@ class LabelApp:
         ))
         # Clear open pointer
         self.open_trade_item_id = None
+        self.update_stats()
 
     def preload_trades(self):
         """Reconstruct trade table from existing situation/exit images.
@@ -275,6 +293,7 @@ class LabelApp:
                     self.open_trade_item_id = None
         # If resume had an open position, open_trade_item_id points to last row
         # No further action needed
+        self.update_stats()
 
     def secondary_action(self):
         # Always normal/continue
@@ -389,6 +408,7 @@ class LabelApp:
                         pass
                 self.open_position = False
                 self.open_trade_item_id = None
+                self.update_stats()
             elif marker_type == 'CLOSE':
                 # Undo a CLOSE: find most recent closed trade and clear exit fields
                 for trade in reversed(self.trades):
@@ -404,6 +424,7 @@ class LabelApp:
                         self.open_trade_item_id = trade['item_id']
                         break
                 self.open_position = True
+                self.update_stats()
             self.status.config(text=f"Reverted state change ({marker_type}).")
             self.update_button_states()
             return
@@ -420,6 +441,49 @@ class LabelApp:
         self.update_image()
         self.status.config(text=f"Undid labeling of {last_img.name}. Re-label this image.")
         self.update_button_states()
+        self.update_stats()
+
+    # --- Statistics ---
+    def update_stats(self):
+        """Compute and display trade statistics for CLOSED trades only."""
+        closed = [t for t in self.trades if t['exit_idx'] is not None]
+        num = len(closed)
+        if num == 0:
+            self.stat_trades.config(text='Number of trades: 0')
+            self.stat_net.config(text='Profit/Loss: 0.00')
+            self.stat_ratio.config(text='Profit/Loss ratio: 0 / 0')
+            self.stat_factor.config(text='Profit factor: 0.00')
+            return
+        results = []
+        for t in closed:
+            # Retrieve result from tree to ensure consistent formatting
+            val = self.trade_table.set(t['item_id'], 'result')
+            try:
+                results.append(float(val))
+            except (TypeError, ValueError):
+                pass
+        num = len(results)
+        wins = [r for r in results if r > 0]
+        losses = [r for r in results if r < 0]
+        win_count = len(wins)
+        loss_count = len(losses)
+        net = sum(results)
+        gross_profit = sum(wins) if wins else 0.0
+        gross_loss = -sum(losses) if losses else 0.0  # make positive
+        # Profit/loss ratio: wins count / losses count (avoid div0)
+        if loss_count == 0:
+            ratio_text = f"{win_count} / {loss_count} (∞)" if win_count > 0 else "0 / 0"
+        else:
+            ratio_text = f"{win_count} / {loss_count} ({win_count/loss_count:.2f})"
+        # Profit factor = gross_profit / gross_loss
+        if gross_loss == 0:
+            pf = float('inf') if gross_profit > 0 else 0.0
+        else:
+            pf = gross_profit / gross_loss
+        self.stat_trades.config(text=f"Number of trades: {num}")
+        self.stat_net.config(text=f"Profit/Loss: {net:.2f}")
+        self.stat_ratio.config(text=f"Profit/Loss ratio: {ratio_text}")
+        self.stat_factor.config(text=f"Profit factor: {pf:.2f}" if pf != float('inf') else "Profit factor: ∞")
 
 
 def main():
