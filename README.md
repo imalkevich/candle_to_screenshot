@@ -6,6 +6,8 @@ This repository currently provides a Python script to download historical OHLC (
 
 * `download_ohlc.py` – Script that pulls OHLC data for a symbol / interval / time range and saves to a CSV inside `data/` automatically.
 * `generate_screenshots.py` – Generates sequential candlestick PNG images from previously downloaded (or freshly refreshed) data.
+* `label_screenshots.py` – Interactive directional (Buy/Sell) trade labeling UI producing processed/ folder structure and statistics.
+* `check_labeled_screenshots.py` – Side‑by‑side trade reviewer that pairs each closed trade's entry and exit screenshots with candle details and PnL.
 * `.vscode/launch.json` – Debug configurations for running the script inside VS Code.
 * `.vscode/tasks.json` – Task to install Python dependencies.
 * `requirements.txt` – Python dependencies (`requests`, `pandas`).
@@ -220,3 +222,60 @@ processed/
 
 ---
 Feel free to extend this script further; open an issue or adapt it for additional workflows.
+
+---
+
+## Trade Screenshot Checker (`check_labeled_screenshots.py`)
+
+After you have labeled trades using `label_screenshots.py`, you can visually audit each CLOSED trade with a compact viewer that presents the entry and exit images side by side plus precise candle and PnL data.
+
+### What It Does
+
+* Reconstructs all CLOSED trades by scanning:
+	* `processed/.../buy/` + `buy_exit/`
+	* `processed/.../sell/` + `sell_exit/`
+* Pairs each entry with the next chronological exit on the same side (entries lacking an exit are skipped as open / incomplete trades).
+* Displays:
+	* Left: Entry screenshot
+	* Right: Exit screenshot
+	* Trade header with index (e.g. `Trade 3/17  BUY  candle_00510.png -> candle_00525.png`)
+	* Candle metadata for entry & exit (timestamp + O/H/L/C/V) extracted from the original OHLC dataframe
+	* Result (PnL): BUY = exit - entry; SELL = entry - exit
+
+### UI & Navigation
+
+* Buttons: `Back` (previous trade), `Next` (next trade)
+* Keyboard: Left Arrow = Back, Right Arrow = Next, Escape = Quit
+* Buttons are disabled automatically at the beginning/end of the trade list
+* If no closed trades are found a clear message is shown and navigation is disabled
+
+### Usage
+
+```powershell
+python check_labeled_screenshots.py --ticker BTCUSDT --interval 15m --time "1 month"
+```
+
+Optional:
+
+* `--refresh` – Re-fetch OHLC CSV before loading (ensures candle details align if you regenerated data)
+
+### When to Use It
+
+* Post‑label QA: verify that entries/exits reflect intended patterns
+* Rapid visual sanity check before exporting data to a model pipeline
+* Reviewing edge cases (very fast reversals, long holds, etc.) without re-running the full labeling UI
+
+### Limitations
+
+* Only shows trades with both entry and exit (open trades are ignored)
+* Assumes naming convention `candle_#####.png` aligns 1‑to‑1 with dataframe rows (same as the labeling tool)
+* If processed folders are manually altered (files moved/deleted) pairing accuracy can degrade; re-run the labeler if needed
+
+### Future Enhancements (Potential)
+
+* Include open (unclosed) trades in a separate pass
+* Export reviewed trades with an approval flag
+* Aggregate statistics (distribution histograms, per-side performance) inside the viewer
+* Filtering by side (BUY only / SELL only) or by min/max holding length
+
+---
