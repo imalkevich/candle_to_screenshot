@@ -458,23 +458,25 @@ class LabelApp:
     def update_image(self):
         img_path = self.current_image()
         if img_path is None:
+            # All done: clear image and status
             self.canvas.config(image='', text='All images labeled. You can close now.')
-            self.status.config(text=f"Done: {len(self.images)}/{len(self.images)}")
+            self.status.config(text='')
             self.btn_buy.config(state=tk.DISABLED)
             self.btn_sell.config(state=tk.DISABLED)
             self.btn_next.config(state=tk.DISABLED)
             self.candle_info.config(text='')
             return
+        # Load & display image
         try:
             with Image.open(img_path) as im:
-                # Scale to fit window while preserving aspect
                 max_w, max_h = 560, 480
                 im.thumbnail((max_w, max_h))
                 self.photo_cache = ImageTk.PhotoImage(im)
                 self.canvas.config(image=self.photo_cache, text='')
         except Exception as e:
             self.canvas.config(text=f"Error loading image: {e}")
-        self.status.config(text=f"Image {self.index+1}/{len(self.images)}: {img_path.name}")
+        # Status: filename + position (e.g., candle_00042.png 42/2400)
+        self.status.config(text=f"{img_path.name} {self.index+1}/{len(self.images)}")
         self.update_candle_info(img_path.name)
 
     def update_candle_info(self, filename: str):
@@ -513,9 +515,9 @@ class LabelApp:
                 # With reconstructed history, this branch should rarely execute (only at first image)
                 self.index -= 1
                 self.update_image()
-                self.status.config(text=f"Moved back. Image {self.index+1}/{len(self.images)}")
             else:
-                self.status.config(text="At first image. No further back navigation.")
+                # At first image: show its filename (if any)
+                self.update_image()
             return
         last_item = self.history.pop()
         if isinstance(last_item, tuple) and last_item and last_item[0] == 'STATE':
@@ -560,7 +562,7 @@ class LabelApp:
                 # Move index back to reflect removal
                 self.index = max(0, self.index - 1)
                 self.update_image()
-            self.status.config(text=f"Reverted state change ({marker_type}).")
+            # Keep only filename in status
             self.update_button_states()
             return
         # Otherwise it's a file copy tuple (img_path, destination_dir)
@@ -574,7 +576,7 @@ class LabelApp:
         # Move index back, update display
         self.index = max(0, self.index - 1)
         self.update_image()
-        self.status.config(text=f"Undid labeling of {last_img.name}. Re-label this image.")
+        # Only filename shown (update_image already sets it)
         self.update_button_states()
         self.update_stats()
 
