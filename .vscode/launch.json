@@ -2,14 +2,27 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Download OHLC: Defaults",
+      "name": "Download OHLC: Defaults BTCUSDT 15m 1 month",
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/download_ohlc.py",
       "args": [
         "--ticker", "BTCUSDT",
         "--interval", "15m",
-        "--time", "1 month"
+        "--time", "1 month",
+        "--source", "binance"
+      ]
+    },
+    {
+      "name": "Download OHLC: Defaults GBPUSD 15m 1 month (Forex)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/download_ohlc.py",
+      "args": [
+        "--ticker", "GBPUSD",
+        "--interval", "15m",
+        "--time", "1 month",
+        "--source", "forex"
       ]
     },
     {
@@ -20,11 +33,12 @@
       "args": [
         "--ticker", "${input:ticker}",
         "--interval", "${input:interval}",
-        "--time", "${input:timeRange}"
+        "--time", "${input:timeRange}",
+        "--source", "${input:source}"
       ]
     },
     {
-      "name": "Generate Screenshots: Defaults",
+      "name": "Generate Screenshots: Defaults BTCUSDT 15m 1 month max 96",
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/generate_screenshots.py",
@@ -32,7 +46,21 @@
         "--ticker", "BTCUSDT",
         "--interval", "15m",
         "--time", "1 month",
-        "--max-candles", "96"
+        "--max-candles", "96",
+        "--source", "binance"
+      ]
+    },
+    {
+      "name": "Generate Screenshots: Defaults GBPUSD 15m 1 month max 96 (Forex)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/generate_screenshots.py",
+      "args": [
+        "--ticker", "GBPUSD",
+        "--interval", "15m",
+        "--time", "1 month",
+        "--max-candles", "96",
+        "--source", "forex"
       ]
     },
     {
@@ -45,18 +73,32 @@
         "--interval", "${input:interval}",
         "--time", "${input:timeRange}",
         "--skip", "${input:skipCandles}",
-        "--max-candles", "${input:maxCandles}"
+        "--max-candles", "${input:maxCandles}",
+        "--source", "${input:source}"
       ]
     },
     {
-      "name": "Label Screenshots: Defaults",
+      "name": "Label Screenshots: Defaults BTCUSDT 15m 1 month",
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/label_screenshots.py",
       "args": [
         "--ticker", "BTCUSDT",
         "--interval", "15m",
-        "--time", "1 month"
+        "--time", "1 month",
+        "--source", "binance"
+      ]
+    },
+    {
+      "name": "Label Screenshots: Defaults GBPUSD 15m 1 month (Forex)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/label_screenshots.py",
+      "args": [
+        "--ticker", "GBPUSD",
+        "--interval", "15m",
+        "--time", "1 month",
+        "--source", "forex"
       ]
     },
     {
@@ -67,19 +109,44 @@
       "args": [
         "--ticker", "${input:ticker}",
         "--interval", "${input:interval}",
-        "--time", "${input:timeRange}"
+        "--time", "${input:timeRange}",
+        "--source", "${input:source}"
       ]
     },
     {
-      "name": "Label Screenshots: Inputs (Refresh)",
+      "name": "Check Trades: Defaults BTCUSDT 15m 1 month",
       "type": "debugpy",
       "request": "launch",
-      "program": "${workspaceFolder}/label_screenshots.py",
+      "program": "${workspaceFolder}/check_labeled_screenshots.py",
+      "args": [
+        "--ticker", "BTCUSDT",
+        "--interval", "15m",
+        "--time", "1 month",
+        "--source", "binance"
+      ]
+    },
+    {
+      "name": "Check Trades: Defaults GBPUSD 15m 1 month (Forex)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/check_labeled_screenshots.py",
+      "args": [
+        "--ticker", "GBPUSD",
+        "--interval", "15m",
+        "--time", "1 month",
+        "--source", "forex"
+      ]
+    },
+    {
+      "name": "Check Trades: Inputs",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/check_labeled_screenshots.py",
       "args": [
         "--ticker", "${input:ticker}",
         "--interval", "${input:interval}",
         "--time", "${input:timeRange}",
-        "--refresh"
+        "--source", "${input:source}"
       ]
     }
   ],
@@ -115,6 +182,13 @@
       "description": "Time range backfill",
       "options": ["1 day","3 days","1 week","2 weeks","1 month","3 months","6 months","1 year"],
       "default": "1 month"
+    },
+    {
+      "id": "source",
+      "type": "pickString",
+      "description": "Data source (binance=crypto spot, forex=Yahoo Finance)",
+      "options": ["binance","forex"],
+      "default": "binance"
     }
   ]
 }

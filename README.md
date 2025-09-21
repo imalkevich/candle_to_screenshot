@@ -1,10 +1,13 @@
 # Candle to Screenshot Utilities
 
-This repository currently provides a Python script to download historical OHLC (candlestick) data from the Binance public API.
+This repository provides utilities to download and visualize historical OHLC (candlestick) data for:
+
+* Crypto spot markets (Binance public REST API)
+* Forex pairs (via Yahoo Finance through `yfinance`)
 
 ## Files
 
-* `download_ohlc.py` – Script that pulls OHLC data for a symbol / interval / time range and saves to a CSV inside `data/` automatically.
+* `download_ohlc.py` – Pull OHLC data (crypto via Binance or forex via Yahoo Finance) for a symbol / interval / time range and save to `data/`.
 * `generate_screenshots.py` – Generates sequential candlestick PNG images from previously downloaded (or freshly refreshed) data.
 * `label_screenshots.py` – Interactive directional (Buy/Sell) trade labeling UI producing processed/ folder structure and statistics.
 * `check_labeled_screenshots.py` – Side‑by‑side trade reviewer that pairs each closed trade's entry and exit screenshots with candle details and PnL.
@@ -29,21 +32,43 @@ Or use the VS Code Task: Terminal > Run Task > "Install Python dependencies".
 
 ## Usage
 
-Run the script specifying ticker, interval, and time range. The output filename is generated automatically:
+Run the script specifying ticker, interval, time range, and optional data source. The output filename is generated automatically:
 
 ```powershell
-python download_ohlc.py --ticker BTCUSDT --interval 15m --time "1 month"
+# Crypto (Binance)
+python download_ohlc.py --ticker BTCUSDT --interval 15m --time "1 month" --source binance
+
+# Forex (Yahoo Finance via yfinance) e.g. GBPUSD 15m last month
+python download_ohlc.py --ticker GBPUSD --interval 15m --time "1 month" --source forex
 ```
 
-This creates (example) a file like:
+Forex symbols: provide a 6‑letter pair (e.g. EURUSD, GBPUSD, USDJPY). The tool automatically maps it to the Yahoo Finance format (e.g. `GBPUSD=X`). You may also pass an explicit Yahoo ticker (e.g. `EURUSD=X`).
+
+This creates (examples) files like:
 
 ```
-data/BTCUSDT_15m_1month.csv
+# Crypto
+data/BTCUSDT_15m_1month_spot.csv
+
+# Forex
+data/GBPUSD_15m_1month_fx.csv
 ```
 
-Pattern: `data/<TICKER>_<INTERVAL>_<TIMERANGE>.csv`
+Pattern: `data/<TICKER>_<INTERVAL>_<TIMERANGE>_<suffix>.csv` where `<suffix>` is `spot` for Binance or `fx` for forex.  
+Example: `BTCUSDT_15m_1month_spot.csv`, `GBPUSD_15m_1month_fx.csv`.
 
 The `<TIMERANGE>` part removes spaces and lowercases (e.g. `1 month` -> `1month`, `3 Days` -> `3days`). If you rerun with the same parameters the file will be overwritten.
+
+### Supported Intervals
+
+The same interval tokens are accepted for both sources (`1m,3m,5m,15m,30m,1h,2h,4h,6h,8h,12h,1d,3d,1w,1M`). For forex, `1M` is internally mapped to Yahoo's `1mo`.
+
+### Forex Notes & Limitations
+
+* Volume data from Yahoo Finance for many FX pairs is absent or zero; stored as `0` (synthetic) for compatibility.
+* Close time is approximated as `open_time + interval_delta`; exact broker session boundaries may differ.
+* Yahoo Finance free feed may throttle frequent requests; consider caching or longer intervals for large backfills.
+* If you need true tick volume or broker‑specific feeds, integrate a dedicated FX data provider instead.
 
 ## Screenshot Generation
 
@@ -74,6 +99,33 @@ Idempotency: Existing PNG files are skipped; re-running after interruption will 
 Automatic cleanup: The target screenshot folder for the specified (ticker, interval, time range) is fully deleted before a new generation run to prevent stale or inconsistent frames from previous executions. Remove or comment this behavior in `generate_screenshots.py` if you prefer incremental appends.
 
 If total candles <= skip value, no screenshots are produced.
+
+## VS Code Launch Configurations and `--source`
+
+The provided `.vscode/launch.json` now includes both crypto (Binance spot) and forex (Yahoo Finance) presets. Each scripted workflow (download, generate, label, check) has:
+
+* A default Binance configuration (e.g. BTCUSDT 15m 1 month)
+* A default Forex configuration (e.g. GBPUSD 15m 1 month)
+* An input‑driven configuration where you can pick `ticker`, `interval`, `timeRange`, `source`, and for generation also `skipCandles` / `maxCandles`.
+
+Important: Always set the `--source` to match the dataset you want. The filename suffix (`_spot` vs `_fx`) depends on this, so downstream scripts (screenshots, labeling, trade checking) will look for the correct CSV. If you accidentally download as forex and then run label with `--source binance`, it will not locate the `_fx` file (a legacy unsuffixed fallback is only attempted in screenshot generation for backward compatibility with older datasets).
+
+Added launch entries (examples):
+
+* Download OHLC: Defaults GBPUSD 15m 1 month (Forex)
+* Generate Screenshots: Defaults GBPUSD 15m 1 month max 96 (Forex)
+* Label Screenshots: Defaults GBPUSD 15m 1 month (Forex)
+* Check Trades: Defaults GBPUSD 15m 1 month (Forex)
+
+To switch a custom (Inputs) configuration from crypto to forex, pick `forex` in the new `source` pick list when the debug panel prompts for inputs.
+
+Rationale for explicit `--source`:
+
+* Avoids accidental mixing of forex vs crypto datasets with similar tickers.
+* Enables future extension to additional sources (e.g. futures) without breaking naming.
+* Makes reproducibility explicit in logs and debug launch history.
+
+If you need to regenerate an older dataset (pre‑suffix) you can still use screenshot generation with the same parameters; it will fall back to the legacy unsuffixed filename if the suffixed file is absent.
 
 ## Manual Labeling UI (Directional Buy/Sell Trades)
 
