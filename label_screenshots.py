@@ -1,4 +1,5 @@
 import argparse
+from typing import Optional, List, Dict, Any
 from pathlib import Path
 import shutil
 import sys
@@ -19,28 +20,34 @@ def build_screenshot_folder(ticker: str, interval: str, time_range: str) -> Path
 
 
 def build_processed_subfolders(ticker: str, interval: str, time_range: str):
+    """Create processed subfolder structure supporting buy/sell operations.
+    Folders:
+      normal     - neutral/next images
+      buy        - entry screenshots for long/buy positions
+      buy_exit   - exit screenshots for buy positions
+      sell       - entry screenshots for short/sell positions
+      sell_exit  - exit screenshots for sell positions
+    """
     sanitized_time = re.sub(r'\s+', '', time_range.lower())
     base = PROCESSED_DIR / f"{ticker.upper()}_{interval}_{sanitized_time}"
-    situation = base / 'situation'
     normal = base / 'normal'
-    exit_dir = base / 'exit'
+    buy = base / 'buy'
+    buy_exit = base / 'buy_exit'
+    sell = base / 'sell'
+    sell_exit = base / 'sell_exit'
     base.mkdir(parents=True, exist_ok=True)
-    situation.mkdir(parents=True, exist_ok=True)
-    normal.mkdir(parents=True, exist_ok=True)
-    exit_dir.mkdir(parents=True, exist_ok=True)
-    return base, situation, normal, exit_dir
+    for d in (normal, buy, buy_exit, sell, sell_exit):
+        d.mkdir(parents=True, exist_ok=True)
+    return base, normal, buy, buy_exit, sell, sell_exit
 
 
 def list_screenshots(folder: Path):
     return sorted([p for p in folder.glob('candle_*.png') if p.is_file()])
 
 
-def determine_start_index(images, situation_dir: Path, normal_dir: Path, exit_dir: Path):
-    """Determine index to resume from by counting already labeled files across all processed folders.
-    We assume copied filenames keep original candle_XXXXX.png name.
-    """
+def determine_start_index(images, *dirs: Path):
     labeled = set()
-    for d in (situation_dir, normal_dir, exit_dir):
+    for d in dirs:
         for p in d.glob('candle_*.png'):
             labeled.add(p.name)
     for idx, img in enumerate(images):
@@ -50,25 +57,38 @@ def determine_start_index(images, situation_dir: Path, normal_dir: Path, exit_di
 
 
 class LabelApp:
-    def __init__(self, root, images, situation_dir: Path, normal_dir: Path, exit_dir: Path, open_position: bool, ohlc_df):
+    def __init__(self, root, images,
+                 normal_dir: Path,
+                 buy_dir: Path, buy_exit_dir: Path,
+                 sell_dir: Path, sell_exit_dir: Path,
+                 open_side,
+                 ohlc_df):
+        # Core state
         self.root = root
         self.images = images
-        self.situation_dir = situation_dir
         self.normal_dir = normal_dir
-        self.exit_dir = exit_dir
-        self.open_position = open_position
-        self.ohlc_df = ohlc_df  # pandas DataFrame with OHLC data
+        self.buy_dir = buy_dir
+        self.buy_exit_dir = buy_exit_dir
+        self.sell_dir = sell_dir
+        self.sell_exit_dir = sell_exit_dir
+        self.open_side = open_side
+        self.ohlc_df = ohlc_df  # pandas DataFrame
         self.index = 0
         self.photo_cache = None
-        self.history: list[tuple[Path, Path]] = []  # file actions
-        self.state_history: list[str] = []  # 'OPEN' / 'CLOSE' sequence for quicker reasoning (optional)
-        self.trades: list[dict] = []  # {item_id, entry_idx, entry_price, exit_idx, exit_price}
-        self.open_trade_item_id: str | None = None
+        self.history: List[Any] = []  # file copy actions and state markers
+        self.state_history: List[str] = []
+        self.trades: List[Dict[str, Any]] = []
+        self.open_trade_item_id: Optional[str] = None
 
         # Window setup
         self.root.title('Candlestick Labeling')
         self.root.configure(bg='#222222')
-        self.root.geometry('1220x620')
+        # Increased width to accommodate added 'Side' column and reduce layout jumping
+        self.root.geometry('1320x640')
+        try:
+            self.root.minsize(1200, 620)
+        except Exception:
+            pass
 
         main_frame = tk.Frame(self.root, bg='#222222')
         main_frame.pack(fill=tk.BOTH, expand=True)
@@ -83,14 +103,15 @@ class LabelApp:
         trades_section = tk.Frame(right_frame, bg='#222222')
         trades_section.pack(fill=tk.BOTH, expand=True, padx=0, pady=(4,2))
         tk.Label(trades_section, text='Trades', bg='#222222', fg='#dddddd', font=('Arial', 10, 'bold')).pack(anchor='n', pady=(0,2))
-        columns = ('entry_date', 'entry_price', 'exit_date', 'exit_price', 'result')
+        columns = ('side', 'entry_date', 'entry_price', 'exit_date', 'exit_price', 'result')
         # Reduce height so statistics fit without needing scroll
         self.trade_table = ttk.Treeview(trades_section, columns=columns, show='headings', height=18)
-        headings = ['Entry Date', 'Entry Price', 'Exit Date', 'Exit Price', 'Result']
-        widths = [140, 90, 140, 90, 80]
+        headings = ['Side', 'Entry Date', 'Entry Price', 'Exit Date', 'Exit Price', 'Result']
+        widths = [60, 140, 90, 140, 90, 80]
         for col, head, w in zip(columns, headings, widths):
             self.trade_table.heading(col, text=head)
-            self.trade_table.column(col, width=w, anchor='center')
+            # Disable stretching so columns keep fixed width and window doesn't jump
+            self.trade_table.column(col, width=w, anchor='center', stretch=False)
         vsb = ttk.Scrollbar(trades_section, orient='vertical', command=self.trade_table.yview)
         self.trade_table.configure(yscrollcommand=vsb.set)
         self.trade_table.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=4, pady=4)
@@ -115,12 +136,14 @@ class LabelApp:
         # Buttons
         btn_frame = tk.Frame(left_frame, bg='#222222')
         btn_frame.pack(pady=6)
-        self.btn_yes = tk.Button(btn_frame, text='Yes (Situation)', width=18, command=self.primary_action, bg='#2e7d32', fg='white')
-        self.btn_yes.grid(row=0, column=0, padx=10, pady=(0,4))
-        self.btn_no = tk.Button(btn_frame, text='No (Normal)', width=18, command=self.secondary_action, bg='#c62828', fg='white')
-        self.btn_no.grid(row=0, column=1, padx=10, pady=(0,4))
+        self.btn_buy = tk.Button(btn_frame, text='Buy', width=12, command=lambda: self.open_trade('BUY'), bg='#2e7d32', fg='white')
+        self.btn_buy.grid(row=0, column=0, padx=6, pady=(0,4))
+        self.btn_sell = tk.Button(btn_frame, text='Sell', width=12, command=lambda: self.open_trade('SELL'), bg='#c62828', fg='white')
+        self.btn_sell.grid(row=0, column=1, padx=6, pady=(0,4))
+        self.btn_next = tk.Button(btn_frame, text='Next', width=12, command=self.mark_normal, bg='#555555', fg='white')
+        self.btn_next.grid(row=0, column=2, padx=6, pady=(0,4))
         self.btn_back = tk.Button(btn_frame, text='Back', width=20, command=self.undo_last, bg='#000000', fg='white')
-        self.btn_back.grid(row=1, column=0, columnspan=2, pady=(6,0))
+        self.btn_back.grid(row=1, column=0, columnspan=3, pady=(6,0))
 
         self.status = tk.Label(left_frame, text='', bg='#222222', fg='#cccccc')
         self.status.pack(pady=4)
@@ -130,8 +153,9 @@ class LabelApp:
         self.candle_info.pack(pady=(0,6))
 
         # Shortcuts
-        self.root.bind('<Return>', lambda e: self.primary_action())
-        self.root.bind('<space>', lambda e: self.secondary_action())
+        self.root.bind('<Up>', lambda e: self.open_trade('BUY'))
+        self.root.bind('<Down>', lambda e: self.open_trade('SELL'))
+        self.root.bind('<Right>', lambda e: self.mark_normal())
         self.root.bind('<BackSpace>', lambda e: self.undo_last())
         self.root.bind('<Escape>', lambda e: self.root.quit())
 
@@ -141,23 +165,66 @@ class LabelApp:
         self.preload_trades()
         self.update_stats()
 
-    # --- State & UI helpers ---
+    # --- Button / state helpers ---
     def update_button_states(self):
-        """Adjust button labels/colors based on whether a position is currently open."""
-        if self.open_position:
-            # Need an exit
-            self.btn_yes.config(text='Exit', bg='#fdd835', fg='black')  # Yellow
-            self.btn_no.config(text='Continue', bg='#c62828', fg='white')
+        """Configure button states based on whether a side is currently open."""
+        if self.open_side is None:
+            # No open trade: Buy/Sell enabled, standard colors, Next enabled
+            self.btn_buy.config(text='Buy', state=tk.NORMAL, command=lambda: self.open_trade('BUY'), bg='#2e7d32', fg='white')
+            self.btn_sell.config(text='Sell', state=tk.NORMAL, command=lambda: self.open_trade('SELL'), bg='#c62828', fg='white')
+            self.btn_next.config(text='Next', state=tk.NORMAL, command=self.mark_normal, bg='#555555', fg='white')
         else:
-            self.btn_yes.config(text='Yes (Situation)', bg='#2e7d32', fg='white')
-            self.btn_no.config(text='No (Normal)', bg='#c62828', fg='white')
+            # One side open - allow exit via that side's button; disable other side
+            if self.open_side == 'BUY':
+                self.btn_buy.config(text='Exit (Buy)', state=tk.NORMAL, command=self.mark_exit, bg='#fdd835', fg='black')
+                self.btn_sell.config(state=tk.DISABLED)
+            else:
+                self.btn_sell.config(text='Exit (Sell)', state=tk.NORMAL, command=self.mark_exit, bg='#fdd835', fg='black')
+                self.btn_buy.config(state=tk.DISABLED)
+            # Next still available to continue labeling intermediate candles
+            self.btn_next.config(text='Next', state=tk.NORMAL, command=self.mark_normal, bg='#555555', fg='white')
 
-    # --- Actions ---
-    def primary_action(self):
-        if self.open_position:
-            self.mark_exit()
-        else:
-            self.mark_situation()
+    # --- Trade lifecycle actions ---
+    def open_trade(self, side: str):
+        if self.open_side is not None:
+            # Already have open trade; ignore
+            return
+        current = self.current_image()
+        if not current:
+            return
+        fname = current.name
+        # Copy to appropriate side entry folder
+        target_dir = self.buy_dir if side == 'BUY' else self.sell_dir
+        self.copy_current(target_dir)
+        # Record state change after file copy
+        self.history.append(('STATE', f'OPEN_{side}'))
+        # Add trade entry row (internal only; store side)
+        self._add_trade_entry(fname, side)
+        self.open_side = side
+        self.advance()
+        self.update_button_states()
+
+    def mark_exit(self):
+        if self.open_side is None:
+            return
+        side = self.open_side
+        current = self.current_image()
+        fname = current.name if current else 'candle_?????.png'
+        # Copy to appropriate exit folder
+        target_dir = self.buy_exit_dir if side == 'BUY' else self.sell_exit_dir
+        self.copy_current(target_dir)
+        # Record state change
+        self.history.append(('STATE', f'CLOSE_{side}'))
+        # Close trade row
+        self._close_trade(fname)
+        self.open_side = None
+        self.advance()
+        self.update_button_states()
+
+    def mark_normal(self):
+        # Always just copy to normal and advance (independent of open trade)
+        self.copy_current(self.normal_dir)
+        self.advance()
 
     # --- Trade helpers ---
     def _filename_to_row_index(self, filename: str) -> int | None:
@@ -225,13 +292,14 @@ class LabelApp:
             price = 0.0
         return ts, price
 
-    def _add_trade_entry(self, filename: str):
+    def _add_trade_entry(self, filename: str, side: str):
         idx = self._filename_to_row_index(filename)
         if idx is None:
             return None
         dt, price = self._row_entry_values(idx)
-        item_id = self.trade_table.insert('', tk.END, values=(dt, f"{price:.2f}", '', '', ''))
-        self.trades.append({'item_id': item_id, 'entry_idx': idx, 'entry_price': price, 'exit_idx': None, 'exit_price': None})
+        item_id = self.trade_table.insert('', tk.END, values=(side, dt, f"{price:.2f}", '', '', ''))
+        self.trades.append({'item_id': item_id, 'entry_idx': idx, 'entry_price': price,
+                            'exit_idx': None, 'exit_price': None, 'side': side})
         self.open_trade_item_id = item_id
         return item_id
 
@@ -242,88 +310,141 @@ class LabelApp:
         if idx is None:
             return
         dt, price = self._row_entry_values(idx)
-        # Find trade dict
         trade = next((t for t in reversed(self.trades) if t['item_id'] == self.open_trade_item_id), None)
         if not trade:
             return
         trade['exit_idx'] = idx
         trade['exit_price'] = price
-        # Sell-only (short/mean-reversion) assumption: profit when price after entry is LOWER
-        # So result = entry - exit
-        result = trade['entry_price'] - price
-        # Update tree item
+        # PnL logic depends on side: BUY -> exit - entry; SELL -> entry - exit
+        if trade['side'] == 'BUY':
+            result = price - trade['entry_price']
+        else:
+            result = trade['entry_price'] - price
         self.trade_table.item(self.open_trade_item_id, values=(
+            trade['side'],
             self.trade_table.set(self.open_trade_item_id, 'entry_date'),
             self.trade_table.set(self.open_trade_item_id, 'entry_price'),
             dt, f"{price:.2f}", f"{result:.2f}"
         ))
-        # Clear open pointer
         self.open_trade_item_id = None
         self.update_stats()
 
     def preload_trades(self):
-        """Reconstruct trade table from existing situation/exit images.
-        Pair situations with the next chronological exit after them (if any).
+        """Reconstruct existing trades from buy/sell + exit folders.
+        We pair each entry with the next exit in its corresponding side's exit folder.
+        If there are more entries than exits, the last unmatched entry is considered open.
         """
-        situation_files = sorted(self.situation_dir.glob('candle_*.png'), key=lambda p: p.name)
-        exit_files = sorted(self.exit_dir.glob('candle_*.png'), key=lambda p: p.name)
-        used_exits = set()
-        # Build list of available exits with numeric index for efficient pairing
         def file_num(p: Path):
             m = re.search(r'(\d+)', p.name)
             return int(m.group(1)) if m else 10**12
-        exit_with_nums = [(file_num(f), f) for f in exit_files]
-        for s in situation_files:
-            s_num = file_num(s)
-            # find earliest exit with num > s_num not used
-            candidate = None
-            for num, f in exit_with_nums:
-                if num > s_num and f not in used_exits:
-                    candidate = f
-                    used_exits.add(f)
-                    break
-            # Add entry row
-            self._add_trade_entry(s.name)
-            if candidate is not None:
-                # Close it
-                prev_open_id = self.open_trade_item_id
-                self._close_trade(candidate.name)
-                # Ensure open pointer stays None after closing
-                if self.open_trade_item_id == prev_open_id:
-                    self.open_trade_item_id = None
-        # If resume had an open position, open_trade_item_id points to last row
-        # No further action needed
+        # Prepare lists
+        buy_entries = sorted(self.buy_dir.glob('candle_*.png'), key=lambda p: p.name)
+        buy_exits = sorted(self.buy_exit_dir.glob('candle_*.png'), key=lambda p: p.name)
+        sell_entries = sorted(self.sell_dir.glob('candle_*.png'), key=lambda p: p.name)
+        sell_exits = sorted(self.sell_exit_dir.glob('candle_*.png'), key=lambda p: p.name)
+
+        def pair_entries(entries, exits, side):
+            used = set()
+            exit_nums = [(file_num(f), f) for f in exits]
+            last_open_trade_id = None
+            for e in entries:
+                e_num = file_num(e)
+                # add trade entry row
+                self._add_trade_entry(e.name, side)
+                # attempt to find exit with num > e_num not used
+                candidate = None
+                for num, f in exit_nums:
+                    if num > e_num and f not in used:
+                        candidate = f
+                        used.add(f)
+                        break
+                if candidate is not None:
+                    prev_open = self.open_trade_item_id
+                    self._close_trade(candidate.name)
+                    if self.open_trade_item_id == prev_open:
+                        self.open_trade_item_id = None
+                else:
+                    # remains open for now
+                    last_open_trade_id = self.open_trade_item_id
+            return last_open_trade_id
+
+        last_buy_open = pair_entries(buy_entries, buy_exits, 'BUY')
+        last_sell_open = pair_entries(sell_entries, sell_exits, 'SELL')
+
+        # Determine which side is actually open (should not be both – if both, prefer most recent)
+        self.open_trade_item_id = None
+        self.open_side = None
+        def trade_start_idx(item_id):
+            if not item_id:
+                return -1
+            trade = next((t for t in self.trades if t['item_id'] == item_id), None)
+            return trade['entry_idx'] if trade else -1
+        b_idx = trade_start_idx(last_buy_open)
+        s_idx = trade_start_idx(last_sell_open)
+        if b_idx >= 0 and s_idx >= 0:
+            if b_idx > s_idx:
+                self.open_trade_item_id = last_buy_open
+                self.open_side = 'BUY'
+            else:
+                self.open_trade_item_id = last_sell_open
+                self.open_side = 'SELL'
+        elif b_idx >= 0:
+            self.open_trade_item_id = last_buy_open
+            self.open_side = 'BUY'
+        elif s_idx >= 0:
+            self.open_trade_item_id = last_sell_open
+            self.open_side = 'SELL'
+        # stats update
         self.update_stats()
+        # Rebuild synthetic history so undo works uniformly (root-cause approach vs fallback heuristics)
+        self.rebuild_history()
 
-    def secondary_action(self):
-        # Always normal/continue
-        self.mark_normal()
+    def rebuild_history(self):
+        """Rebuild the history stack from existing labeled files in chronological order.
+        This enables consistent single-step undo behavior after a resume.
+        History model: sequence of (file_copy) followed immediately (for entries/exits) by a STATE marker.
+        We infer chronology from filename numeric order.
+        Limitations: Cannot distinguish interleaving of normals vs trades beyond filename order, which is acceptable
+        because labeling progresses strictly forward.
+        """
+        self.history.clear()
+        # Collect all labeled files with their semantic types
+        def collect(dir_path: Path, kind: str):
+            out = []
+            for p in dir_path.glob('candle_*.png'):
+                m = re.search(r'(\d+)', p.name)
+                if not m:
+                    continue
+                out.append((int(m.group(1)), p, kind))
+            return out
+        items = []
+        items += collect(self.normal_dir, 'NORMAL')
+        items += collect(self.buy_dir, 'BUY_ENTRY')
+        items += collect(self.buy_exit_dir, 'BUY_EXIT')
+        items += collect(self.sell_dir, 'SELL_ENTRY')
+        items += collect(self.sell_exit_dir, 'SELL_EXIT')
+        # Sort by candle number to recreate chronological order
+        items.sort(key=lambda x: x[0])
+        # We'll simulate history: for each entry/exit, push file tuple then STATE marker; for normal just file tuple.
+        # For file copy we need the original screenshot path (self.images[index-1]) but we only have filename.
+        # We'll reconstruct by mapping filename -> source path via self.images.
+        filename_to_source = {p.name: p for p in self.images}
+        for _num, file_path, kind in items:
+            src = filename_to_source.get(file_path.name)
+            if not src:
+                continue
+            # Push synthetic file copy action
+            self.history.append((src, file_path.parent))
+            if kind == 'BUY_ENTRY':
+                self.history.append(('STATE', 'OPEN_BUY'))
+            elif kind == 'SELL_ENTRY':
+                self.history.append(('STATE', 'OPEN_SELL'))
+            elif kind == 'BUY_EXIT':
+                self.history.append(('STATE', 'CLOSE_BUY'))
+            elif kind == 'SELL_EXIT':
+                self.history.append(('STATE', 'CLOSE_SELL'))
 
-    def mark_situation(self):
-        current = self.current_image()
-        fname = current.name if current else 'candle_?????.png'
-        self.copy_current(self.situation_dir)
-        self.open_position = True
-        self.history.append(('STATE', 'OPEN'))
-        # Add trade entry row
-        self._add_trade_entry(fname)
-        self.advance()
-        self.update_button_states()
-
-    def mark_normal(self):
-        self.copy_current(self.normal_dir)
-        self.advance()
-
-    def mark_exit(self):
-        current = self.current_image()
-        fname = current.name if current else 'candle_?????.png'
-        self.copy_current(self.exit_dir)
-        self.open_position = False
-        self.history.append(('STATE', 'CLOSE'))
-        # Close trade row
-        self._close_trade(fname)
-        self.advance()
-        self.update_button_states()
+    # mark_normal already defined earlier (side-aware version)
 
     def set_index(self, value):
         self.index = value
@@ -339,8 +460,9 @@ class LabelApp:
         if img_path is None:
             self.canvas.config(image='', text='All images labeled. You can close now.')
             self.status.config(text=f"Done: {len(self.images)}/{len(self.images)}")
-            self.btn_yes.config(state=tk.DISABLED)
-            self.btn_no.config(state=tk.DISABLED)
+            self.btn_buy.config(state=tk.DISABLED)
+            self.btn_sell.config(state=tk.DISABLED)
+            self.btn_next.config(state=tk.DISABLED)
             self.candle_info.config(text='')
             return
         try:
@@ -384,47 +506,60 @@ class LabelApp:
         self.index += 1
         self.update_image()
 
-    # Old mark_yes/mark_no kept for compatibility (not used directly)
-    def mark_yes(self):
-        self.primary_action()
-
-    def mark_no(self):
-        self.secondary_action()
-
     def undo_last(self):
         if not self.history:
-            self.status.config(text=f"No action to undo. {self.index+1}/{len(self.images)}")
+            # Allow pure navigation backwards even if no undoable action exists
+            if self.index > 0:
+                # With reconstructed history, this branch should rarely execute (only at first image)
+                self.index -= 1
+                self.update_image()
+                self.status.config(text=f"Moved back. Image {self.index+1}/{len(self.images)}")
+            else:
+                self.status.config(text="At first image. No further back navigation.")
             return
         last_item = self.history.pop()
         if isinstance(last_item, tuple) and last_item and last_item[0] == 'STATE':
             marker_type = last_item[1]
-            if marker_type == 'OPEN':
-                # Undo an OPEN: remove last trade row
+            if marker_type.startswith('OPEN_'):
+                # Undo an OPEN_{SIDE}
                 if self.trades:
                     trade = self.trades.pop()
                     try:
                         self.trade_table.delete(trade['item_id'])
                     except Exception:
                         pass
-                self.open_position = False
+                self.open_side = None
                 self.open_trade_item_id = None
                 self.update_stats()
-            elif marker_type == 'CLOSE':
-                # Undo a CLOSE: find most recent closed trade and clear exit fields
+            elif marker_type.startswith('CLOSE_'):
+                # Undo a CLOSE_{SIDE}
                 for trade in reversed(self.trades):
                     if trade['exit_idx'] is not None:
                         trade['exit_idx'] = None
                         trade['exit_price'] = None
-                        # Update row removing exit columns
                         self.trade_table.item(trade['item_id'], values=(
+                            trade.get('side',''),
                             self.trade_table.set(trade['item_id'], 'entry_date'),
                             self.trade_table.set(trade['item_id'], 'entry_price'),
                             '', '', ''
                         ))
                         self.open_trade_item_id = trade['item_id']
+                        self.open_side = trade.get('side')
                         break
-                self.open_position = True
                 self.update_stats()
+            # Also remove the immediately preceding file copy entry if present so one Back press is atomic
+            if self.history and isinstance(self.history[-1], tuple) and isinstance(self.history[-1][0], Path):
+                file_item = self.history.pop()
+                img_path_obj, dest_dir = file_item
+                target_file = dest_dir / img_path_obj.name
+                try:
+                    if target_file.exists():
+                        target_file.unlink()
+                except Exception:
+                    pass
+                # Move index back to reflect removal
+                self.index = max(0, self.index - 1)
+                self.update_image()
             self.status.config(text=f"Reverted state change ({marker_type}).")
             self.update_button_states()
             return
@@ -487,7 +622,7 @@ class LabelApp:
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Label candlestick screenshots with Yes/No into processed folders.')
+    parser = argparse.ArgumentParser(description='Label candlestick screenshots with Buy/Sell labeling into processed folders.')
     parser.add_argument('--ticker', required=True, help='Ticker symbol, e.g. BTCUSDT')
     parser.add_argument('--interval', required=True, help='Chart interval, e.g. 15m')
     parser.add_argument('--time', required=True, help='Time interval, e.g. "1 month"')
@@ -515,39 +650,54 @@ def main():
         print('[WARN] No images to label after generation attempt. Exiting.')
         return 0
 
-    base, situation_dir, normal_dir, exit_dir = build_processed_subfolders(args.ticker, args.interval, args.time)
+    base, normal_dir, buy_dir, buy_exit_dir, sell_dir, sell_exit_dir = build_processed_subfolders(args.ticker, args.interval, args.time)
 
     # If restart requested, clear existing labeled files only (not screenshots)
     if args.restart:
         removed = 0
-        for d in (situation_dir, normal_dir, exit_dir):
+        for d in (normal_dir, buy_dir, buy_exit_dir, sell_dir, sell_exit_dir):
             for f in d.glob('candle_*.png'):
                 try:
                     f.unlink()
                     removed += 1
                 except Exception as e:
                     print(f"[WARN] Could not remove {f}: {e}")
-        if removed:
-            print(f"[INFO] Restart requested: removed {removed} previously labeled images (including exit events).")
-        else:
-            print("[INFO] Restart requested: no existing labeled images to remove.")
+        msg = f"removed {removed} previously labeled images" if removed else "no existing labeled images to remove"
+        print(f"[INFO] Restart requested: {msg}.")
 
     # Determine resume position
-    start_index = 0 if args.restart else determine_start_index(images, situation_dir, normal_dir, exit_dir)
+    start_index = 0 if args.restart else determine_start_index(images, normal_dir, buy_dir, buy_exit_dir, sell_dir, sell_exit_dir)
     if start_index >= len(images):
         print('[INFO] All images already labeled.')
         return 0
 
-    # Detect open position state for resume logic:
-    # Open if more situations than exits (an unclosed situation) or counts differ and situation > exit
-    situation_count = len(list(situation_dir.glob('candle_*.png')))
-    exit_count = len(list(exit_dir.glob('candle_*.png')))
-    open_position = situation_count > exit_count
+    # Detect open side for resume (if any) based on unmatched entry vs exit counts per side
+    buy_entries = len(list(buy_dir.glob('candle_*.png')))
+    buy_exits = len(list(buy_exit_dir.glob('candle_*.png')))
+    sell_entries = len(list(sell_dir.glob('candle_*.png')))
+    sell_exits = len(list(sell_exit_dir.glob('candle_*.png')))
+    open_side = None
+    if buy_entries > buy_exits:
+        open_side = 'BUY'
+    if sell_entries > sell_exits:
+        # If both appear open (shouldn't), choose the most recent by filename index
+        if open_side == 'BUY':
+            # compare latest unmatched entry indices
+            def last_idx(dir_path):
+                files = sorted(dir_path.glob('candle_*.png'))
+                if not files:
+                    return -1
+                m = re.search(r'(\d+)', files[-1].name)
+                return int(m.group(1)) if m else -1
+            if last_idx(sell_dir) > last_idx(buy_dir):
+                open_side = 'SELL'
+        else:
+            open_side = 'SELL'
 
     # Load OHLC dataframe for trade table (ensure it's loaded even if screenshots pre-exist)
     ohlc_df = load_dataframe(csv_path)
     root = tk.Tk()
-    app = LabelApp(root, images, situation_dir, normal_dir, exit_dir, open_position, ohlc_df)
+    app = LabelApp(root, images, normal_dir, buy_dir, buy_exit_dir, sell_dir, sell_exit_dir, open_side, ohlc_df)
     app.set_index(start_index)
     root.mainloop()
     return 0
